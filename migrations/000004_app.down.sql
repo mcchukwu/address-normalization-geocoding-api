@@ -1,0 +1,9 @@
+DROP FUNCTION IF EXISTS app.purge_expired_raw_text();
+DROP FUNCTION IF EXISTS app.drop_old_request_partitions(integer);
+DROP FUNCTION IF EXISTS app.ensure_request_partitions(integer);
+DROP TABLE IF EXISTS app.corrections;
+DROP TABLE IF EXISTS app.request_raw_text;
+DROP TABLE IF EXISTS app.requests;
+DROP TABLE IF EXISTS app.tenants;
+DROP TYPE  IF EXISTS app.correction_status;
+DROP TYPE  IF EXISTS app.traffic_class;
