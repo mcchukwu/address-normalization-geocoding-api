@@ -1,4 +1,3 @@
 bin/*
 *.log
-
-# Add project-specific ignore patterns below.
+.env
