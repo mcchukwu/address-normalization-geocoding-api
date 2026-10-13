@@ -1,0 +1,641 @@
+openapi: 3.1.0
+info:
+  title: Nigerian Address Normalization & Geocoding API
+  version: 1.0.0
+  summary: Turn messy Nigerian address text into structured parts and an honest coordinate.
+  description: |
+    Nigerian addresses are often written relative to landmarks, and no authoritative address
+    register covers the country. This API therefore never returns a bare coordinate: every
+    answer carries a **precision class**, a **radius** and a **confidence**, and when the
+    evidence only supports an area the answer says so (or returns `none` with no coordinate).
+
+    ## Precision classes
+
+    | Class | Meaning | Claimed radius |
+    | --- | --- | --- |
+    | `building` | On or inside a building | 50 m |
+    | `street` | On the named road | 300 m |
+    | `locality` | Centre of a named neighbourhood or landmark area | 2 km |
+    | `lga` | Local government area (representative point) | the area's extent |
+    | `state` | State (representative point) | the state's extent |
+    | `none` | Nothing resolved; no coordinate | not applicable |
+
+    Confidence is calibrated: among answers with confidence 0.8 or higher, at least 90% are
+    expected to fall inside the claimed radius.
+
+    ## Authentication and rate limits
+
+    Send your API key in the `X-API-Key` header. Each operation lists the scope it needs in
+    `x-required-scopes`. Limits apply per tenant (default 60 requests a minute) and are
+    reported on every response in the `RateLimit-*` headers; a `429` adds `Retry-After`.
+    A batch call costs one request plus one more for every 10 addresses.
+
+    ## Errors
+
+    Every error is an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) problem document
+    (`application/problem+json`) with a stable `code`. An address that cannot be resolved is
+    **not** an error: it returns `200` with precision `none`.
+
+    ## Privacy
+
+    Raw address text is not logged. Tenants may opt in to keeping it for up to 30 days.
+  contact:
+    name: API support
+servers:
+  - url: http://localhost:8080
+    description: Local development
+  - url: https://api.example.com
+    description: Production (placeholder)
+tags:
+  - name: Geocoding
+    description: Normalize and geocode address text.
+  - name: Corrections
+    description: Send back a confirmed location to improve evaluation.
+  - name: Operations
+    description: Liveness and readiness probes.
+security:
+  - ApiKey: []
+paths:
+  /v1/normalize:
+    post:
+      tags: [Geocoding]
+      operationId: normalizeAddress
+      summary: Split an address into its parts
+      description: |
+        Expands Nigerian abbreviations (`opp.`, `b/stop`, `rd.`), separates landmarks and their
+        relation (opposite, beside, behind) and extracts house number, street, area, LGA,
+        state and postcode. No coordinate is computed.
+      x-required-scopes: [normalize]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NormalizeRequest' }
+            examples:
+              landmark:
+                summary: Landmark-style address
+                value:
+                  address: opp. first bank, allen avenue, ikeja, lagos
+      responses:
+        '200':
+          description: The address, split into parts.
+          headers: &commonHeaders
+            X-Request-ID: { $ref: '#/components/headers/RequestId' }
+            RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+            RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NormalizeResponse' }
+              examples:
+                landmark:
+                  value:
+                    input: opp. first bank, allen avenue, ikeja, lagos
+                    normalized:
+                      street: allen avenue
+                      area: ikeja
+                      state: lagos
+                      landmarks:
+                        - { name: first bank, relation: opposite }
+                    warnings: []
+                    request_id: 3f1c2a52-7e0e-4a2b-9d51-6f4a4b0b9a10
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/geocode:
+    post:
+      tags: [Geocoding]
+      operationId: geocodeAddress
+      summary: Geocode one address
+      description: |
+        Returns the best coordinate the evidence supports, with its precision class, radius and
+        confidence, plus ranked alternative candidates and warnings. If nothing resolves, the
+        response is still `200` with `result` set to null; a pin is never faked.
+      x-required-scopes: [geocode]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GeocodeRequest' }
+            examples:
+              landmark:
+                summary: Landmark-style address
+                value:
+                  address: opp. first bank, allen avenue, ikeja, lagos
+                  max_candidates: 3
+      responses:
+        '200':
+          description: "The answer. When nothing resolves, `result` is null."
+          headers: *commonHeaders
+          links:
+            SubmitCorrection:
+              operationId: submitCorrection
+              description: Send back the true location for this answer.
+              requestBody:
+                request_id: $response.body#/request_id
+                address: $response.body#/input
+                confirmed:
+                  lat: 6.6018
+                  lng: 3.3515
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GeocodeResponse' }
+              examples:
+                resolved:
+                  summary: Resolved to a street
+                  value:
+                    input: opp. first bank, allen avenue, ikeja, lagos
+                    normalized:
+                      street: allen avenue
+                      area: ikeja
+                      state: lagos
+                      landmarks:
+                        - { name: first bank, relation: opposite }
+                    result: { lat: 6.6018, lng: 3.3515, precision: street, radius_m: 300, confidence: 0.71 }
+                    candidates:
+                      - { lat: 6.6018, lng: 3.3515, precision: street, confidence: 0.71, source: gazetteer }
+                    warnings: [landmark_not_matched]
+                    data_version: 2026-10-gaz-1
+                    request_id: 3f1c2a52-7e0e-4a2b-9d51-6f4a4b0b9a10
+                unresolved:
+                  summary: Nothing resolved
+                  value:
+                    input: behind the mango tree
+                    normalized:
+                      landmarks:
+                        - { name: the mango tree, relation: behind }
+                    result: null
+                    candidates: []
+                    warnings: [landmark_not_matched]
+                    data_version: 2026-10-gaz-1
+                    request_id: 9a0f1d34-1c07-4f0e-8b0a-0d1f5a9c2e77
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/geocode:batch:
+    post:
+      tags: [Geocoding]
+      operationId: geocodeBatch
+      summary: Geocode up to 100 addresses in one call
+      description: |
+        Each address is resolved independently and the results come back in order. The whole call is
+        rejected with `422` if any item breaks the schema (the errors name the item, for example
+        `items[3].address`); otherwise it returns `200` and each result carries its own `status`.
+        A batch costs one request plus one more for every 10 addresses.
+      x-required-scopes: [geocode]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BatchRequest' }
+      responses:
+        '200':
+          description: One result per input item, in the same order.
+          headers: *commonHeaders
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BatchResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/corrections:
+    post:
+      tags: [Corrections]
+      operationId: submitCorrection
+      summary: Submit a confirmed location for an earlier request
+      description: |
+        Tells us where an address really is. The `request_id` must belong to a recent geocode call
+        made by your tenant; otherwise the response is `404`. Corrections are stored for offline
+        evaluation and do not change answers automatically. One correction per request.
+      x-required-scopes: [corrections:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CorrectionRequest' }
+      responses:
+        '201':
+          description: The correction was recorded and awaits review.
+          headers: *commonHeaders
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Correction' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /healthz:
+    get:
+      tags: [Operations]
+      operationId: liveness
+      summary: Liveness probe
+      description: Returns 200 while the process is running. Needs no API key.
+      security: []
+      responses:
+        '200':
+          description: The process is alive.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+  /readyz:
+    get:
+      tags: [Operations]
+      operationId: readiness
+      summary: Readiness probe
+      description: Returns 200 only when the database is reachable. Needs no API key.
+      security: []
+      responses:
+        '200':
+          description: Ready to serve traffic.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+        '503':
+          description: Not ready.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+components:
+  securitySchemes:
+    ApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Your API key. Scopes are listed per operation in `x-required-scopes`.
+  headers:
+    RequestId:
+      description: Identifier of this request. Quote it in support requests and corrections.
+      schema: { type: string, format: uuid }
+    RateLimitLimit:
+      description: Requests allowed per minute for your tenant.
+      schema: { type: integer, minimum: 1 }
+    RateLimitRemaining:
+      description: Requests left in the current window.
+      schema: { type: integer, minimum: 0 }
+    RateLimitReset:
+      description: Seconds until the allowance is full again.
+      schema: { type: integer, minimum: 0 }
+    RetryAfter:
+      description: Seconds to wait before retrying.
+      schema: { type: integer, minimum: 1 }
+  schemas:
+    Precision:
+      type: string
+      enum: [building, street, locality, lga, state, none]
+    Warning:
+      type: string
+      description: Something the caller should know about this answer.
+      enum:
+        - landmark_not_matched
+        - ambiguous_place
+        - source_unavailable
+        - budget_exhausted
+        - low_confidence
+        - unknown_state_hint
+    Hints:
+      type: object
+      additionalProperties: false
+      description: Optional context that narrows the search.
+      properties:
+        state:
+          type: string
+          maxLength: 60
+          description: State name or common alias, for example Lagos or FCT.
+          examples: [Lagos]
+        lga:
+          type: string
+          maxLength: 100
+          examples: [Ikeja]
+    Address:
+      type: string
+      minLength: 3
+      maxLength: 500
+      pattern: '\S'
+      description: Address text as a person would write it.
+      examples: [opp. first bank, allen avenue, ikeja, lagos]
+    NormalizeRequest:
+      type: object
+      additionalProperties: false
+      required: [address]
+      properties:
+        address: { $ref: '#/components/schemas/Address' }
+        hints: { $ref: '#/components/schemas/Hints' }
+    GeocodeRequest:
+      type: object
+      additionalProperties: false
+      required: [address]
+      properties:
+        address: { $ref: '#/components/schemas/Address' }
+        hints: { $ref: '#/components/schemas/Hints' }
+        max_candidates:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 3
+          description: Most alternative candidates to return.
+    Landmark:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        relation:
+          type: string
+          description: How the address relates to the landmark. Empty when the landmark is simply named.
+          enum: [opposite, beside, behind, after, before, near, inside, off]
+    NormalizedAddress:
+      type: object
+      description: Only the parts that were found are present.
+      properties:
+        house_number: { type: string }
+        street: { type: string }
+        area: { type: string }
+        lga: { type: string }
+        state: { type: string }
+        postcode:
+          type: string
+          description: Six-digit postal code.
+        landmarks:
+          type: array
+          items: { $ref: '#/components/schemas/Landmark' }
+    Fix:
+      type: object
+      required: [lat, lng, precision, confidence]
+      properties:
+        lat: { type: number, minimum: -90, maximum: 90 }
+        lng: { type: number, minimum: -180, maximum: 180 }
+        precision:
+          allOf:
+            - $ref: '#/components/schemas/Precision'
+          not: { const: none }
+        radius_m:
+          type: [integer, 'null']
+          description: Claimed error radius in metres; null for lga and state, whose radius is the area's own extent.
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+    Candidate:
+      type: object
+      required: [lat, lng, precision, confidence, source]
+      properties:
+        lat: { type: number }
+        lng: { type: number }
+        precision:
+          allOf:
+            - $ref: '#/components/schemas/Precision'
+          not: { const: none }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        source:
+          type: string
+          description: Which source produced the candidate.
+          examples: [gazetteer]
+    GeocodeAnswer:
+      type: object
+      required: [input, normalized, result, candidates, warnings]
+      properties:
+        input: { type: string }
+        normalized: { $ref: '#/components/schemas/NormalizedAddress' }
+        result:
+          description: The best answer, or null when nothing resolves.
+          oneOf:
+            - $ref: '#/components/schemas/Fix'
+            - type: 'null'
+        candidates:
+          type: array
+          items: { $ref: '#/components/schemas/Candidate' }
+        warnings:
+          type: array
+          items: { $ref: '#/components/schemas/Warning' }
+    NormalizeResponse:
+      type: object
+      required: [input, normalized, warnings, request_id]
+      properties:
+        input: { type: string }
+        normalized: { $ref: '#/components/schemas/NormalizedAddress' }
+        warnings:
+          type: array
+          items: { $ref: '#/components/schemas/Warning' }
+        request_id: { type: string, format: uuid }
+    GeocodeResponse:
+      allOf:
+        - $ref: '#/components/schemas/GeocodeAnswer'
+        - type: object
+          required: [data_version, request_id]
+          properties:
+            data_version:
+              type: string
+              description: Label of the gazetteer build that produced the answer.
+              examples: [2026-10-gaz-1]
+            request_id: { type: string, format: uuid }
+    BatchItem:
+      type: object
+      additionalProperties: false
+      required: [address]
+      properties:
+        address: { $ref: '#/components/schemas/Address' }
+        hints: { $ref: '#/components/schemas/Hints' }
+        client_ref:
+          type: string
+          maxLength: 64
+          description: Your own identifier, echoed back on the matching result.
+    BatchRequest:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/BatchItem' }
+        max_candidates:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 3
+    BatchResult:
+      type: object
+      required: [index, status]
+      properties:
+        index: { type: integer, minimum: 0 }
+        client_ref: { type: string }
+        status:
+          type: string
+          enum: [ok, error]
+        answer:
+          description: Present when status is ok.
+          $ref: '#/components/schemas/GeocodeAnswer'
+        error:
+          description: Present when status is error.
+          $ref: '#/components/schemas/Problem'
+    BatchResponse:
+      type: object
+      required: [results, data_version, request_id]
+      properties:
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/BatchResult' }
+        data_version: { type: string }
+        request_id: { type: string, format: uuid }
+    Confirmed:
+      type: object
+      additionalProperties: false
+      required: [lat, lng]
+      description: A location inside Nigeria's bounding box.
+      properties:
+        lat: { type: number, minimum: 4.0, maximum: 14.5 }
+        lng: { type: number, minimum: 2.0, maximum: 15.0 }
+    CorrectionRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, address, confirmed]
+      properties:
+        request_id:
+          type: string
+          format: uuid
+          description: The request_id of your earlier geocode call.
+        address:
+          $ref: '#/components/schemas/Address'
+        confirmed: { $ref: '#/components/schemas/Confirmed' }
+        note: { type: string, maxLength: 500 }
+    Correction:
+      type: object
+      required: [id, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [pending, accepted, rejected]
+        created_at: { type: string, format: date-time }
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [ok] }
+    FieldError:
+      type: object
+      required: [field, message]
+      properties:
+        field: { type: string }
+        message: { type: string }
+    Problem:
+      type: object
+      description: RFC 9457 problem document.
+      required: [type, title, status, code]
+      properties:
+        type: { type: string, format: uri-reference }
+        title: { type: string }
+        status: { type: integer, minimum: 400, maximum: 599 }
+        detail: { type: string }
+        code:
+          type: string
+          enum:
+            - invalid_json
+            - validation_failed
+            - unauthorized
+            - insufficient_scope
+            - request_not_found
+            - not_found
+            - method_not_allowed
+            - duplicate_correction
+            - payload_too_large
+            - rate_limited
+            - internal_error
+            - auth_unavailable
+            - not_ready
+        request_id: { type: string }
+        errors:
+          type: array
+          description: Per-field problems, present for validation_failed.
+          items: { $ref: '#/components/schemas/FieldError' }
+        retry_after_seconds:
+          type: integer
+          description: Present for rate_limited.
+  responses:
+    BadRequest:
+      description: The body is not valid JSON.
+      headers: &errorHeaders
+        X-Request-ID: { $ref: '#/components/headers/RequestId' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unauthorized:
+      description: The API key is missing or invalid.
+      headers: *errorHeaders
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Forbidden:
+      description: The key is valid but lacks the required scope.
+      headers: *errorHeaders
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: The referenced request does not exist for your tenant, or has expired from the log.
+      headers: *errorHeaders
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: A correction for this request already exists.
+      headers: *errorHeaders
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    PayloadTooLarge:
+      description: The request body exceeds 128 KB.
+      headers: *errorHeaders
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unprocessable:
+      description: The JSON is well formed but a field is missing, unknown or out of range.
+      headers: *errorHeaders
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    TooManyRequests:
+      description: The tenant's rate limit is used up.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/RequestId' }
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+        RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+        RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+        RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    InternalError:
+      description: Something failed on our side.
+      headers: *errorHeaders
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unavailable:
+      description: A dependency such as the auth service is unavailable. Retry shortly.
+      headers: *errorHeaders
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
