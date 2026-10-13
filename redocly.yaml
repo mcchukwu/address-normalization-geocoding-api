@@ -1,0 +1,6 @@
+extends:
+  - recommended
+rules:
+  info-license: off          # choose a licence before publishing
+  no-server-example.com: off # production URL is a placeholder
+  operation-4xx-response: off # probes have no client errors
