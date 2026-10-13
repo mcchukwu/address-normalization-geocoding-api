@@ -4,7 +4,7 @@ Go + PostgreSQL/PostGIS + REST/OpenAPI. Turns messy Nigerian address text into s
 coordinate that always states its precision, radius and confidence. Never fakes a pin.
 
     make dev          # database, migrations and the API in Docker  (needs docker, psql)
-    curl -s localhost:8080/v1/geocode -H 'X-API-Key: devkey' \
+    source .env && curl -s localhost:8080/v1/geocode -H "X-API-Key: $$AUTH_STATIC_KEYS" \
          -d '{"address":"opp. first bank, allen avenue, ikeja, lagos"}'
 
 Reference docs: `docs/index.html` (generated from `openapi/openapi.yaml`, the source of truth).
