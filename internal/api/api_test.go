@@ -227,6 +227,8 @@ func TestValidation(t *testing.T) {
 		{"wrong type", `{"address":123}`, 422, "validation_failed", "address"},
 		{"max_candidates too big", `{"address":"allen avenue","max_candidates":11}`, 422, "validation_failed", "max_candidates"},
 		{"max_candidates zero", `{"address":"allen avenue","max_candidates":0}`, 422, "validation_failed", "max_candidates"},
+		{"max_candidates string", `{"address":"allen avenue","max_candidates":"2"}`, 422, "validation_failed", "max_candidates"},
+		{"max_candidates overflow", `{"address":"allen avenue","max_candidates":1e400}`, 422, "validation_failed", "max_candidates"},
 		{"null hint", `{"address":"allen avenue","hints":{"lga":null,"state":"Lagos"}}`, 422, "validation_failed", "hints.lga"},
 		{"null max_candidates", `{"address":"allen avenue","max_candidates":null}`, 422, "validation_failed", "max_candidates"},
 		{"fractional max_candidates", `{"address":"allen avenue","max_candidates":2.5}`, 422, "validation_failed", "max_candidates"},
@@ -264,6 +266,19 @@ func TestIntegersMayBeWrittenWithAFractionalZero(t *testing.T) {
 	// a short address padded with spaces is allowed by the contract (3+ characters, not blank)
 	if rec := h.do("POST", "/v1/geocode", "keyA", `{"address":"a  "}`); rec.Code != 200 {
 		t.Errorf("contract allows this: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestScientificNotationIntegersAreAccepted(t *testing.T) {
+	h := newHarness(t)
+	// 1e1 == 10.0, should be accepted as valid integer
+	rec := h.do("POST", "/v1/geocode", "keyA", `{"address":"allen avenue, ikeja","max_candidates":1e1}`)
+	if rec.Code != 200 {
+		t.Fatalf("1e1 equals 10, should be accepted: %d %s", rec.Code, rec.Body)
+	}
+	m := decodeBody(t, rec)
+	if n := len(m["candidates"].([]any)); n > 10 {
+		t.Errorf("max_candidates 1e1 should cap at 10, got %d", n)
 	}
 }
 
