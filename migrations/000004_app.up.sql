@@ -79,10 +79,15 @@ CREATE TABLE app.corrections (
 CREATE INDEX corrections_status ON app.corrections (status, created_at);
 
 -- Monthly partitions, created ahead of time by a scheduled job.
+-- If a month's rows already landed in the default partition (the job ran late), they are moved into
+-- the new partition: a plain CREATE ... PARTITION OF would fail while such rows exist.
+-- SECURITY DEFINER lets the low-privilege maintenance role run it without owning the tables.
 CREATE FUNCTION app.ensure_request_partitions(months_ahead integer DEFAULT 2)
-RETURNS integer LANGUAGE plpgsql AS $$
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
     m       timestamp;
+    lo      timestamptz;
+    hi      timestamptz;
     created integer := 0;
     part    text;
 BEGIN
@@ -90,11 +95,14 @@ BEGIN
         m    := date_trunc('month', now() AT TIME ZONE 'UTC') + make_interval(months => i);
         part := format('requests_%s', to_char(m, 'YYYY_MM'));
         IF to_regclass(format('app.%I', part)) IS NULL THEN
+            lo := m AT TIME ZONE 'UTC';
+            hi := (m + interval '1 month') AT TIME ZONE 'UTC';
+            LOCK TABLE app.requests_default IN SHARE ROW EXCLUSIVE MODE;   -- pause writers to the default partition
+            EXECUTE format('CREATE TABLE app.%I (LIKE app.requests INCLUDING ALL)', part);
             EXECUTE format(
-                'CREATE TABLE app.%I PARTITION OF app.requests FOR VALUES FROM (%L) TO (%L)',
-                part,
-                (m AT TIME ZONE 'UTC'),
-                ((m + interval '1 month') AT TIME ZONE 'UTC'));
+                'WITH moved AS (DELETE FROM app.requests_default WHERE received_at >= %L AND received_at < %L RETURNING *) '
+                'INSERT INTO app.%I SELECT * FROM moved', lo, hi, part);
+            EXECUTE format('ALTER TABLE app.requests ATTACH PARTITION app.%I FOR VALUES FROM (%L) TO (%L)', part, lo, hi);
             created := created + 1;
         END IF;
     END LOOP;
@@ -103,7 +111,7 @@ END $$;
 
 -- Retention: whole months are dropped once they are entirely older than keep_days.
 CREATE FUNCTION app.drop_old_request_partitions(keep_days integer DEFAULT 90)
-RETURNS integer LANGUAGE plpgsql AS $$
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
     r       record;
     month   timestamp;
@@ -128,7 +136,7 @@ END $$;
 -- Daily: delete expired raw text and blank expired text inside corrections.
 CREATE FUNCTION app.purge_expired_raw_text()
 RETURNS TABLE (raw_rows_deleted bigint, correction_texts_cleared bigint)
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE a bigint; b bigint;
 BEGIN
     DELETE FROM app.request_raw_text WHERE expires_at < now();
@@ -139,3 +147,8 @@ BEGIN
     GET DIAGNOSTICS b = ROW_COUNT;
     RETURN QUERY SELECT a, b;
 END $$;
+
+-- Functions are executable by everyone by default; these three are privileged, so say who may run them.
+REVOKE ALL ON FUNCTION app.ensure_request_partitions(integer),
+                       app.drop_old_request_partitions(integer),
+                       app.purge_expired_raw_text() FROM PUBLIC;
