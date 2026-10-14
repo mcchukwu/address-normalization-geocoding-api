@@ -25,12 +25,12 @@ type normalizeRequest struct {
 	Hints   *hintsDTO `json:"hints"`
 }
 
-// geocodeRequest uses json.Number for max_candidates to accept 2.0 (valid per JSON Schema)
-// while rejecting 2.5 with a proper field name in the error.
+// geocodeRequest uses json.RawMessage for max_candidates to accept 2.0 (valid per JSON Schema)
+// while rejecting strings, 2.5, and overflow (1e400) with a proper field name in the error.
 type geocodeRequest struct {
-	Address       string       `json:"address"`
-	Hints         *hintsDTO    `json:"hints"`
-	MaxCandidates *json.Number `json:"max_candidates"`
+	Address       string          `json:"address"`
+	Hints         *hintsDTO       `json:"hints"`
+	MaxCandidates json.RawMessage `json:"max_candidates"`
 }
 
 type batchItem struct {
@@ -40,8 +40,8 @@ type batchItem struct {
 }
 
 type batchRequest struct {
-	Items         []batchItem  `json:"items"`
-	MaxCandidates *json.Number `json:"max_candidates"`
+	Items         []batchItem    `json:"items"`
+	MaxCandidates json.RawMessage `json:"max_candidates"`
 }
 
 type correctionRequest struct {

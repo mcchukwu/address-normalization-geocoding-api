@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -176,22 +177,18 @@ func checkHints(prefix string, h *hintsDTO) []FieldError {
 	return errs
 }
 
-func checkMax(m *json.Number) (int, []FieldError) {
-	if m == nil {
+func checkMax(raw json.RawMessage) (int, []FieldError) {
+	if len(raw) == 0 {
 		return defaultCandidates, nil
 	}
-	f, err := m.Float64()
-	if err != nil {
-		return 0, []FieldError{{Field: "max_candidates", Message: "must be a number"}}
+	if raw[0] == '"' {
+		return 0, []FieldError{{Field: "max_candidates", Message: "must be a number, not a string"}}
 	}
-	if f != math.Trunc(f) {
-		return 0, []FieldError{{Field: "max_candidates", Message: "must be an integer (2.0 is accepted, 2.5 is not)"}}
+	f, err := strconv.ParseFloat(string(raw), 64)
+	if err != nil || f != math.Trunc(f) || f < 1 || f > 10 {
+		return 0, []FieldError{{Field: "max_candidates", Message: "must be an integer from 1 to 10 (2.0 is accepted)"}}
 	}
-	v := int(f)
-	if v < 1 || v > 10 {
-		return 0, []FieldError{{Field: "max_candidates", Message: "must be between 1 and 10"}}
-	}
-	return v, nil
+	return int(f), nil
 }
 
 // ---- POST /v1/normalize
