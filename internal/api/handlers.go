@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -175,14 +176,22 @@ func checkHints(prefix string, h *hintsDTO) []FieldError {
 	return errs
 }
 
-func checkMax(m *wholeNumber) (int, []FieldError) {
+func checkMax(m *json.Number) (int, []FieldError) {
 	if m == nil {
 		return defaultCandidates, nil
 	}
-	if *m < 1 || *m > 10 {
+	f, err := m.Float64()
+	if err != nil {
+		return 0, []FieldError{{Field: "max_candidates", Message: "must be a number"}}
+	}
+	if f != math.Trunc(f) {
+		return 0, []FieldError{{Field: "max_candidates", Message: "must be an integer (2.0 is accepted, 2.5 is not)"}}
+	}
+	v := int(f)
+	if v < 1 || v > 10 {
 		return 0, []FieldError{{Field: "max_candidates", Message: "must be between 1 and 10"}}
 	}
-	return int(*m), nil
+	return v, nil
 }
 
 // ---- POST /v1/normalize

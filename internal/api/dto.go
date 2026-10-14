@@ -2,23 +2,9 @@ package api
 
 import (
 	"encoding/json"
-	"math"
-	"reflect"
 
 	"github.com/mcchukwu/address-normalization-geocoding-api/internal/resolver"
 )
-
-// wholeNumber accepts 6 and 6.0 alike: JSON Schema treats any number with no fractional part as an integer.
-type wholeNumber int
-
-func (w *wholeNumber) UnmarshalJSON(b []byte) error {
-	var f float64
-	if err := json.Unmarshal(b, &f); err != nil || f != math.Trunc(f) || math.Abs(f) > 1e9 {
-		return &json.UnmarshalTypeError{Value: string(b), Type: reflect.TypeOf(0)}
-	}
-	*w = wholeNumber(int(f))
-	return nil
-}
 
 // These types are the wire format; openapi/openapi.yaml is their source of truth.
 
@@ -39,21 +25,23 @@ type normalizeRequest struct {
 	Hints   *hintsDTO `json:"hints"`
 }
 
+// geocodeRequest uses json.Number for max_candidates to accept 2.0 (valid per JSON Schema)
+// while rejecting 2.5 with a proper field name in the error.
 type geocodeRequest struct {
 	Address       string       `json:"address"`
 	Hints         *hintsDTO    `json:"hints"`
-	MaxCandidates *wholeNumber `json:"max_candidates"`
+	MaxCandidates *json.Number `json:"max_candidates"`
 }
 
 type batchItem struct {
-	Address   string    `json:"address"`
-	Hints     *hintsDTO `json:"hints"`
-	ClientRef string    `json:"client_ref"`
+	Address   string       `json:"address"`
+	Hints     *hintsDTO    `json:"hints"`
+	ClientRef string       `json:"client_ref"`
 }
 
 type batchRequest struct {
 	Items         []batchItem  `json:"items"`
-	MaxCandidates *wholeNumber `json:"max_candidates"`
+	MaxCandidates *json.Number `json:"max_candidates"`
 }
 
 type correctionRequest struct {
