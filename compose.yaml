@@ -15,5 +15,29 @@ services:
       timeout: 3s
       retries: 20
 
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+    environment:
+      - GEOCODE_ENV=${GEOCODE_ENV:-dev}
+      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
+      - AUTH_MODE=${AUTH_MODE}
+      - AUTH_STATIC_KEYS=${AUTH_STATIC_KEYS}
+      - HASH_KEY=${HASH_KEY}
+      - SOURCES=${SOURCES}
+      - DEFAULT_RATE_PER_MIN=${DEFAULT_RATE_PER_MIN}
+      - MAX_BODY_BYTES=${MAX_BODY_BYTES}
+      - SOURCE_TIMEOUT_MS=${SOURCE_TIMEOUT_MS}
+      - DATA_VERSION=${DATA_VERSION}
+      - ADDR=:8080
+      - ADMIN_ADDR=:9090
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   postgres_data:
