@@ -3,30 +3,36 @@
 # make contract run the OpenAPI contract tests against a running server
 export GOFLAGS ?=
 
+.ONESHELL:
+
 .PHONY: dev up migrate verify down-all psql run test test-db contract docs lint
+# Load .env for make targets
+include .env
+export
+
 dev: up migrate
-	psql "$$DATABASE_URL" -q -v ON_ERROR_STOP=1 -f scripts/dev-roles.sql
+	docker compose exec -T db psql -U "$(POSTGRES_USER)" -d "$(POSTGRES_DB)" -q -v ON_ERROR_STOP=1 -f - < scripts/dev-roles.sql
 	docker compose up -d --build api
-	@echo "API on http://localhost:8080  (key: $$AUTH_STATIC_KEYS)   metrics on http://localhost:9090/metrics"
+	@echo "API on http://localhost:8080  (key: $(AUTH_STATIC_KEYS))   metrics on http://localhost:9090/metrics"
 
 up:
 	docker compose up -d --wait db
 
 migrate:
-	@for f in $$(ls migrations/*.up.sql | sort); do
-	  echo "applying $$f"; psql "$$DATABASE_URL" -q -v ON_ERROR_STOP=1 -f $$f || exit 1;
+	@for f in $$(ls migrations/*.up.sql | sort); do \
+	  echo "applying $$f"; docker compose exec -T db psql -U "$(POSTGRES_USER)" -d "$(POSTGRES_DB)" -q -v ON_ERROR_STOP=1 -f - < $$f || exit 1; \
 	done
 
 verify:
-	psql "$$DATABASE_URL" -q -v ON_ERROR_STOP=1 -f tests/verify.sql
+	docker compose exec -T db psql -U "$(POSTGRES_USER)" -d "$(POSTGRES_DB)" -q -v ON_ERROR_STOP=1 -f - < tests/verify.sql
 
 down-all:
-	@for f in $$(ls migrations/*.down.sql | sort -r); do
-	  echo "reverting $$f"; psql "$$DATABASE_URL" -q -v ON_ERROR_STOP=1 -f $$f || exit 1;
+	@for f in $$(ls migrations/*.down.sql | sort -r); do \
+	  echo "reverting $$f"; docker compose exec -T db psql -U "$(POSTGRES_USER)" -d "$(POSTGRES_DB)" -q -v ON_ERROR_STOP=1 -f - < $$f || exit 1; \
 	done
 
 psql:
-	psql "$$DATABASE_URL"
+	docker compose exec -T db psql -U "$(POSTGRES_USER)" -d "$(POSTGRES_DB)"
 
 run:           ## run locally against the dev database, with the demo fixture source
 	GEOCODE_ENV=dev AUTH_MODE=static SOURCES=fixture \
