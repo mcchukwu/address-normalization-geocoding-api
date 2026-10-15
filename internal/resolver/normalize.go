@@ -112,6 +112,9 @@ func (n *Normalizer) Normalize(raw string, h Hints) (Components, []string) {
 	// The first unclassified segment is the most specific place name ("ikeja gra", then "ikeja").
 	if len(areas) > 0 {
 		c.Area = areas[0]
+		if len(areas) > 1 {
+			c.Other = areas[1:]
+		}
 	}
 
 	if h.State != "" {
@@ -129,9 +132,19 @@ func (n *Normalizer) Normalize(raw string, h Hints) (Components, []string) {
 	return c, warnings
 }
 
+// NameKey is how place names are compared: lowercase, punctuation removed, abbreviations expanded.
+// Both the gazetteer builder and the request path call it, so "Allen Ave", "allen avenue." and
+// "Allen-Avenue" all become the same key. It is idempotent.
+func (n *Normalizer) NameKey(s string) string {
+	s = strings.ToLower(s)
+	s = strings.NewReplacer("\u2019", "", "'", "", "\"", "", "(", " ", ")", " ", ",", " ", ";", " ",
+		"-", " ", "&", " and ", "_", " ", ".", " ").Replace(s)
+	return clean(n.expand(strings.Join(strings.Fields(s), " ")))
+}
+
 // Canonical is a stable text form of the parts, used for hashing, never for display.
 func (c Components) Canonical() string {
-	parts := []string{c.HouseNumber, c.Street, c.Area, c.LGA, c.State, c.Postcode}
+	parts := []string{c.HouseNumber, c.Street, c.Area, c.LGA, c.State, c.Postcode, strings.Join(c.Other, "+")}
 	for _, l := range c.Landmarks {
 		parts = append(parts, l.Relation+":"+l.Name)
 	}

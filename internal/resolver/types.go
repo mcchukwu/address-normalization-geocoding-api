@@ -50,6 +50,7 @@ type Components struct {
 	LGA         string
 	State       string
 	Postcode    string
+	Other       []string // further place names that fit no category (a misspelt road word, a city after a district)
 	Landmarks   []Landmark
 }
 
@@ -66,6 +67,7 @@ type Candidate struct {
 	Confidence float64
 	Source     string
 	Matched    []string // which parts matched, e.g. "street", "area", "landmark:first bank"
+	Ambiguous  bool     // several plausible places share this name
 }
 
 // Fix is the chosen answer.

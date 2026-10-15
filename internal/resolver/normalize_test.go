@@ -91,3 +91,30 @@ func TestCanonicalIsStable(t *testing.T) {
 		t.Errorf("different spellings should hash alike:\n %q\n %q", a.Canonical(), b.Canonical())
 	}
 }
+
+func TestNameKey(t *testing.T) {
+	n := NewNormalizer(DefaultTerms())
+	same := [][]string{
+		{"Allen Ave", "allen avenue", "ALLEN AVENUE.", "Allen-Avenue"},
+		{"Eti-Osa", "eti osa"},
+		{"Adeola Odeku St", "adeola odeku street"},
+		{"St. Mary's Church", "st marys church"},
+		{"V.I.", "v i"},
+	}
+	for _, group := range same {
+		want := n.NameKey(group[0])
+		for _, g := range group {
+			if got := n.NameKey(g); got != want {
+				t.Errorf("NameKey(%q) = %q, want %q", g, got, want)
+			}
+		}
+	}
+	if got := n.NameKey("Allen Ave"); got != "allen avenue" {
+		t.Errorf("got %q", got)
+	}
+	for _, s := range []string{"Allen Ave", "St. Mary's Church", "Eti-Osa", "B/Stop Ikeja"} {
+		if n.NameKey(n.NameKey(s)) != n.NameKey(s) {
+			t.Errorf("NameKey must be idempotent for %q", s)
+		}
+	}
+}
