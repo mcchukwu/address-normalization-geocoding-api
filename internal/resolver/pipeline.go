@@ -100,6 +100,9 @@ func (p *Pipeline) Geocode(ctx context.Context, raw string, h Hints, maxCandidat
 	for _, c := range all {
 		if c.Confidence >= p.Thresholds[c.Precision] {
 			ans.Fix = &Fix{Lat: c.Lat, Lng: c.Lng, Precision: c.Precision, Confidence: c.Confidence}
+			if c.Ambiguous {
+				ans.Warnings = appendOnce(ans.Warnings, "ambiguous_place")
+			}
 			break
 		}
 	}
