@@ -41,3 +41,15 @@ func TestDevelopmentDefaults(t *testing.T) {
 		t.Errorf("unexpected defaults: %+v", c)
 	}
 }
+
+func TestProductionAcceptsTheGazetteerSource(t *testing.T) {
+	setenv(t, map[string]string{"GEOCODE_ENV": "prod", "AUTH_MODE": "http", "AUTH_URL": "http://auth", "DATABASE_URL": "postgres://x",
+		"HASH_KEY": "0123456789abcdef", "SOURCES": "gazetteer"})
+	if _, err := FromEnv(); err != nil {
+		t.Fatalf("a correct production setup should load: %v", err)
+	}
+	setenv(t, map[string]string{"GEOCODE_ENV": "dev", "AUTH_MODE": "static", "AUTH_STATIC_KEYS": "k|t|n|geocode", "SOURCES": "gazetteer"})
+	if _, err := FromEnv(); err == nil {
+		t.Errorf("the gazetteer source without a database must be refused")
+	}
+}

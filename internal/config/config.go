@@ -77,8 +77,11 @@ func FromEnv() (Config, error) {
 		if s == "fixture" && c.Env == "prod" {
 			return c, errors.New("the fixture source is for development only")
 		}
-		if s != "fixture" {
-			return c, fmt.Errorf("unknown source %q (the PostGIS gazetteer source arrives in the resolver phase)", s)
+		if s == "gazetteer" && c.DatabaseURL == "" {
+			return c, errors.New("the gazetteer source needs DATABASE_URL")
+		}
+		if s != "fixture" && s != "gazetteer" {
+			return c, fmt.Errorf("unknown source %q (known: gazetteer, fixture)", s)
 		}
 	}
 
