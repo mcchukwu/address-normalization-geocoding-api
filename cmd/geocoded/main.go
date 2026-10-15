@@ -77,12 +77,28 @@ func run(log *slog.Logger) error {
 	m := metrics.New()
 	limiter := ratelimit.New()
 	reqlog := api.NewRequestLogger(st, 1024, m, log)
-	srv := api.New(api.Options{Auth: authn, Store: st, Pipeline: pipe, Limiter: limiter, Metrics: m, Logger: log,
-		ReqLog: reqlog, HashKey: cfg.HashKey, DefaultRatePerMin: cfg.DefaultRatePerMin,
-		MaxBodyBytes: cfg.MaxBodyBytes, DataVersion: cfg.DataVersion})
+	srv := api.New(api.Options{
+		Auth:              authn,
+		Store:             st,
+		Pipeline:          pipe,
+		Limiter:           limiter,
+		Metrics:           m,
+		Logger:            log,
+		ReqLog:            reqlog,
+		HashKey:           cfg.HashKey,
+		DefaultRatePerMin: cfg.DefaultRatePerMin,
+		MaxBodyBytes:      cfg.MaxBodyBytes,
+		DataVersion:       cfg.DataVersion,
+	})
 
-	public := &http.Server{Addr: cfg.Addr, Handler: srv, ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
+	public := &http.Server{
+		Addr:              cfg.Addr,
+		Handler:           srv,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 
 	adminMux := http.NewServeMux()
 	adminMux.HandleFunc("GET /metrics", func(w http.ResponseWriter, _ *http.Request) {
