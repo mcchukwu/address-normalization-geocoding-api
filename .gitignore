@@ -2,3 +2,5 @@ bin/*
 *.log
 *.test
 .env
+# Large OSM extracts
+data/osm/*.pbf
