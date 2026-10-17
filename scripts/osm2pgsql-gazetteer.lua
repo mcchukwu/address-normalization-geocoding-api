@@ -1,7 +1,11 @@
 -- osm2pgsql flex style: reads an OpenStreetMap extract into a small staging schema (osm_stage).
 -- The gazetteer builder (cmd/gazetteer) then turns the staging rows into gaz.features and gaz.names.
--- Usage:
---   osm2pgsql -d "$DATABASE_URL" -O flex -S scripts/osm2pgsql-gazetteer.lua nigeria-latest.osm.pbf
+-- Prefer scripts/build-gazetteer.sh, which does all of this. By hand:
+--   psql "$ETL_DATABASE_URL" -c 'CREATE SCHEMA IF NOT EXISTS osm_stage'      -- osm2pgsql will not create it
+--   osm2pgsql -d "$ETL_DATABASE_URL" -O flex -S scripts/osm2pgsql-gazetteer.lua --slim --drop \
+--             data/osm/nigeria-latest.osm.pbf
+-- --slim keeps node locations in the database so ways and relations can be assembled; --drop removes
+-- osm2pgsql's own working tables afterwards, leaving only osm_stage.roads, places and addresses.
 local schema = 'osm_stage'
 
 local roads = osm2pgsql.define_way_table('roads', {
