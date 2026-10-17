@@ -1,0 +1,7 @@
+raw_text,lat,lng,expected_precision,truth_method,city,state,style,collected_at,notes
+"12 allen avenue, ikeja, lagos",6.5990,3.3480,building,door_step_gps,Ikeja,Lagos,structured,2026-10-01,test fixture
+"opp. first bank, allen avenue, ikeja, lagos",6.6020,3.3520,street,door_step_gps,Ikeja,Lagos,landmark,2026-10-01,test fixture
+"garki, abuja",9.0300,7.4900,locality,door_step_gps,Abuja,Federal Capital Territory,structured,2026-10-01,test fixture
+"V.I., lagos",6.4281,3.4219,locality,door_step_gps,Lagos,Lagos,poi_name,2026-10-01,test fixture
+"behind the mango tree",6.6000,3.3500,street,door_step_gps,Ikeja,Lagos,landmark,2026-10-01,test fixture: nothing to match
+"first bank",6.6020,3.3520,street,door_step_gps,Ikeja,Lagos,poi_name,2026-10-01,test fixture: ambiguous

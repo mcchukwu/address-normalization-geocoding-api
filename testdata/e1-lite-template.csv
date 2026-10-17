@@ -1,0 +1,2 @@
+raw_text,lat,lng,expected_precision,truth_method,city,state,style,collected_at,notes,source_url
+"opp. first bank, allen avenue, ikeja",6.6020,3.3520,street,door_step_gps,Ikeja,Lagos,landmark,2026-10-20,EXAMPLE ROW: delete it. Coordinates are illustrative,
