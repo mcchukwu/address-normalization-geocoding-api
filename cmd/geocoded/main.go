@@ -1,3 +1,4 @@
+// Command geocoded serves the Nigerian address normalization and geocoding API.
 package main
 
 import (
@@ -13,6 +14,7 @@ import (
 	"github.com/mcchukwu/address-normalization-geocoding-api/internal/api"
 	"github.com/mcchukwu/address-normalization-geocoding-api/internal/auth"
 	"github.com/mcchukwu/address-normalization-geocoding-api/internal/config"
+	"github.com/mcchukwu/address-normalization-geocoding-api/internal/gazetteer"
 	"github.com/mcchukwu/address-normalization-geocoding-api/internal/metrics"
 	"github.com/mcchukwu/address-normalization-geocoding-api/internal/ratelimit"
 	"github.com/mcchukwu/address-normalization-geocoding-api/internal/resolver"
