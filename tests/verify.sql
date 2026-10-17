@@ -32,8 +32,9 @@ SELECT pg_temp.check_that('terms expand opp -> opposite',
 DO $$
 DECLARE v integer; lagos bigint; ikeja bigint; road bigint; n integer; top text;
 BEGIN
-    INSERT INTO gaz.data_versions (label, osm_extract_date) VALUES ('test-1', '2026-10-01') RETURNING id INTO v;
-    INSERT INTO gaz.active_version (data_version_id) VALUES (v);
+    INSERT INTO gaz.data_versions (label, osm_extract_date) VALUES ('verify-' || gen_random_uuid(), '2026-10-01') RETURNING id INTO v;
+    INSERT INTO gaz.active_version (singleton, data_version_id) VALUES (true, v)
+        ON CONFLICT (singleton) DO UPDATE SET data_version_id = EXCLUDED.data_version_id;   -- safe on a database that already has a build: all rolled back
 
     INSERT INTO gaz.features (data_version_id, kind, geom, source, source_id, licence, fetched_at)
     VALUES (v, 'state', ST_GeomFromText('POLYGON((2.7 6.3,4.4 6.3,4.4 6.8,2.7 6.8,2.7 6.3))', 4326),
@@ -72,8 +73,8 @@ BEGIN
         format($f$INSERT INTO gaz.names (feature_id, name, name_norm, is_primary) VALUES (%s, 'Allen', 'allen', true)$f$, road));
 
     -- switching the active version hides the old build from the API's views
-    INSERT INTO gaz.data_versions (label) VALUES ('test-2');
-    UPDATE gaz.active_version SET data_version_id = (SELECT id FROM gaz.data_versions WHERE label = 'test-2');
+    INSERT INTO gaz.data_versions (label) VALUES ('verify-other-' || gen_random_uuid());
+    UPDATE gaz.active_version SET data_version_id = (SELECT max(id) FROM gaz.data_versions);
     PERFORM pg_temp.check_that('inactive version is invisible to the API views',
         (SELECT count(*) FROM gaz.current_features) = 0);
     UPDATE gaz.active_version SET data_version_id = v;
@@ -126,7 +127,9 @@ BEGIN
            (gen_random_uuid(), now(), 'fresh text', now() + interval '30 days');
     SELECT raw_rows_deleted, correction_texts_cleared INTO cnt, cleared FROM app.purge_expired_raw_text();
     PERFORM pg_temp.check_that('purge deletes expired raw text only',
-        cnt = 1 AND (SELECT count(*) FROM app.request_raw_text) = 1);
+        cnt >= 1
+        AND NOT EXISTS (SELECT 1 FROM app.request_raw_text WHERE raw_input = 'old text')
+        AND EXISTS (SELECT 1 FROM app.request_raw_text WHERE raw_input = 'fresh text'));
 
     PERFORM pg_temp.must_fail('correction with swapped Lagos coordinates',
         format($f$INSERT INTO app.corrections (id, tenant_id, request_id, input_hash, normalized, original_precision, confirmed)
@@ -191,6 +194,36 @@ BEGIN
         round(m.false_confidence_rate::numeric, 2) = 0.33);
 END $$;
 
+-- ---------------------------------------------------------------- api keys
+DO $$
+DECLARE t uuid := gen_random_uuid();
+BEGIN
+    INSERT INTO app.tenants (tenant_id, display_name) VALUES (t, 'Keys tenant');
+    INSERT INTO app.api_keys (id, tenant_id, key_id, secret_hash, name, scopes)
+    VALUES (gen_random_uuid(), t, 'abcdef01', sha256('secret'), 'prod', '{geocode,normalize}');
+    PERFORM pg_temp.check_that('an API key row is accepted', (SELECT count(*) FROM app.api_keys WHERE tenant_id = t) = 1);
+    PERFORM pg_temp.must_fail('key with an unknown scope',
+        format($f$INSERT INTO app.api_keys (id, tenant_id, key_id, secret_hash, name, scopes)
+                  VALUES (gen_random_uuid(), %L, 'abcdef02', sha256('x'), 'k', '{admin}')$f$, t));
+    PERFORM pg_temp.must_fail('key with no scopes',
+        format($f$INSERT INTO app.api_keys (id, tenant_id, key_id, secret_hash, name, scopes)
+                  VALUES (gen_random_uuid(), %L, 'abcdef03', sha256('x'), 'k', '{}')$f$, t));
+    PERFORM pg_temp.must_fail('key stored with a hash of the wrong length',
+        format($f$INSERT INTO app.api_keys (id, tenant_id, key_id, secret_hash, name, scopes)
+                  VALUES (gen_random_uuid(), %L, 'abcdef04', '\x00', 'k', '{geocode}')$f$, t));
+    PERFORM pg_temp.must_fail('key id that is not 8 hex characters',
+        format($f$INSERT INTO app.api_keys (id, tenant_id, key_id, secret_hash, name, scopes)
+                  VALUES (gen_random_uuid(), %L, 'NOPE', sha256('x'), 'k', '{geocode}')$f$, t));
+    PERFORM pg_temp.must_fail('two keys with the same public id',
+        format($f$INSERT INTO app.api_keys (id, tenant_id, key_id, secret_hash, name, scopes)
+                  VALUES (gen_random_uuid(), %L, 'abcdef01', sha256('x'), 'k', '{geocode}')$f$, t));
+    INSERT INTO app.requests (id, received_at, tenant_id, key_id, endpoint, traffic_class, status_code, latency_ms)
+    VALUES (gen_random_uuid(), now(), t, 'abcdef01', 'geocode', 'real', 200, 5),
+           (gen_random_uuid(), now(), t, 'abcdef01', 'geocode', 'real', 429, 1);
+    PERFORM pg_temp.check_that('daily usage counts requests and rate limiting',
+        (SELECT requests = 2 AND rate_limited = 1 FROM app.usage_daily WHERE tenant_id = t AND endpoint = 'geocode'));
+END $$;
+
 -- ---------------------------------------------------------------- roles
 DO $$
 BEGIN
@@ -200,6 +233,10 @@ BEGIN
     PERFORM count(id) FROM app.requests WHERE tenant_id IS NOT NULL;   -- the columns corrections need
     PERFORM pg_temp.must_fail('API role reading request latency', 'SELECT latency_ms FROM app.requests');
     PERFORM pg_temp.must_fail('API role reading request hashes', 'SELECT input_hash FROM app.requests');
+    PERFORM count(key_id) FROM app.api_keys;                            -- the columns needed to check a key
+    PERFORM pg_temp.must_fail('API role reading key names', 'SELECT name FROM app.api_keys');
+    PERFORM pg_temp.must_fail('API role issuing keys', $f$INSERT INTO app.api_keys (id, tenant_id, key_id, secret_hash, name, scopes) VALUES (gen_random_uuid(), gen_random_uuid(), 'abcdef09', sha256('x'), 'k', '{geocode}')$f$);
+    PERFORM pg_temp.must_fail('API role widening scopes', $f$UPDATE app.api_keys SET scopes = '{geocode,normalize}'$f$);
     PERFORM pg_temp.must_fail('API role writing the gazetteer',
         $f$INSERT INTO gaz.data_versions (label) VALUES ('hijack')$f$);
     PERFORM pg_temp.must_fail('API role reading evaluation data', 'SELECT count(*) FROM eval.sets');
@@ -209,6 +246,7 @@ BEGIN
     PERFORM app.ensure_request_partitions(0);
     PERFORM app.purge_expired_raw_text();
     PERFORM pg_temp.must_fail('maintenance role reading the gazetteer', 'SELECT count(*) FROM gaz.features');
+    PERFORM count(*) FROM app.usage_daily;                              -- operators can read usage
     RESET ROLE;
     SET LOCAL ROLE geocode_etl;
     PERFORM pg_temp.must_fail('ETL role reading the request log', 'SELECT count(*) FROM app.requests');
