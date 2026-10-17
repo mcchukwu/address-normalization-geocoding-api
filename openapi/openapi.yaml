@@ -282,7 +282,10 @@ components:
       type: apiKey
       in: header
       name: X-API-Key
-      description: Your API key. Scopes are listed per operation in `x-required-scopes`.
+      description: >-
+        Your API key, which looks like `gk_` followed by 8 hex characters, an underscore and 64 hex
+        characters. The service operator issues it once; it cannot be shown again. Scopes are listed per
+        operation in `x-required-scopes`.
   headers:
     RequestId:
       description: Identifier of this request. Quote it in support requests and corrections.
