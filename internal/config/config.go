@@ -17,7 +17,7 @@ type Config struct {
 	Addr              string
 	AdminAddr         string // /metrics is served here, never on the public listener
 	DatabaseURL       string // empty = in-memory store (dev only)
-	AuthMode          string // "static" or "http"
+	AuthMode          string // "local" (keys in the database), "http" (external auth service) or "static" (dev only)
 	AuthStatic        string
 	AuthURL           string
 	HashKey           []byte
@@ -35,7 +35,7 @@ func FromEnv() (Config, error) {
 		Addr:              get("ADDR", ":8080"),
 		AdminAddr:         get("ADMIN_ADDR", "127.0.0.1:9090"),
 		DatabaseURL:       os.Getenv("DATABASE_URL"),
-		AuthMode:          get("AUTH_MODE", "http"),
+		AuthMode:          get("AUTH_MODE", "local"),
 		AuthStatic:        os.Getenv("AUTH_STATIC_KEYS"),
 		AuthURL:           os.Getenv("AUTH_URL"),
 		DefaultRatePerMin: atoi("DEFAULT_RATE_PER_MIN", 60),
@@ -60,12 +60,16 @@ func FromEnv() (Config, error) {
 		if c.AuthStatic == "" {
 			return c, errors.New("AUTH_STATIC_KEYS is required when AUTH_MODE=static")
 		}
+	case "local":
+		if c.DatabaseURL == "" {
+			return c, errors.New("AUTH_MODE=local needs DATABASE_URL (keys are stored in the database)")
+		}
 	case "http":
 		if c.AuthURL == "" {
 			return c, errors.New("AUTH_URL is required when AUTH_MODE=http")
 		}
 	default:
-		return c, fmt.Errorf("AUTH_MODE must be static or http, got %q", c.AuthMode)
+		return c, fmt.Errorf("AUTH_MODE must be local, http or static, got %q", c.AuthMode)
 	}
 	if c.DatabaseURL == "" && c.Env == "prod" {
 		return c, errors.New("DATABASE_URL is required in prod")

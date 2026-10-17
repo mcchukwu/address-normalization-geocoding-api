@@ -42,6 +42,17 @@ func TestDevelopmentDefaults(t *testing.T) {
 	}
 }
 
+func TestLocalAuthNeedsADatabase(t *testing.T) {
+	setenv(t, map[string]string{"GEOCODE_ENV": "dev", "AUTH_MODE": "local", "SOURCES": "fixture"})
+	if _, err := FromEnv(); err == nil {
+		t.Errorf("local keys cannot work without a database")
+	}
+	setenv(t, map[string]string{"GEOCODE_ENV": "dev", "AUTH_MODE": "local", "DATABASE_URL": "postgres://x", "SOURCES": "fixture"})
+	if _, err := FromEnv(); err != nil {
+		t.Errorf("local auth with a database should load: %v", err)
+	}
+}
+
 func TestProductionAcceptsTheGazetteerSource(t *testing.T) {
 	setenv(t, map[string]string{"GEOCODE_ENV": "prod", "AUTH_MODE": "http", "AUTH_URL": "http://auth", "DATABASE_URL": "postgres://x",
 		"HASH_KEY": "0123456789abcdef", "SOURCES": "gazetteer"})
