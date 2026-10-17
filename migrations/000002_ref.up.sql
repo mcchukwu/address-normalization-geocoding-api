@@ -41,7 +41,7 @@ INSERT INTO ref.states (id, name, name_norm, aliases) VALUES
     (12, 'Edo', 'edo', '{}'),
     (13, 'Ekiti', 'ekiti', '{}'),
     (14, 'Enugu', 'enugu', '{}'),
-    (15, 'Federal Capital Territory', 'federal capital territory', '{fct,abuja,"fct abuja"}'),
+    (15, 'Federal Capital Territory', 'federal capital territory', '{fct,abuja,"fct abuja","abuja federal capital territory"}'),
     (16, 'Gombe', 'gombe', '{}'),
     (17, 'Imo', 'imo', '{}'),
     (18, 'Jigawa', 'jigawa', '{}'),
