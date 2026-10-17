@@ -34,13 +34,13 @@ type geocodeRequest struct {
 }
 
 type batchItem struct {
-	Address   string       `json:"address"`
-	Hints     *hintsDTO    `json:"hints"`
-	ClientRef string       `json:"client_ref"`
+	Address   string    `json:"address"`
+	Hints     *hintsDTO `json:"hints"`
+	ClientRef string    `json:"client_ref"`
 }
 
 type batchRequest struct {
-	Items         []batchItem    `json:"items"`
+	Items         []batchItem     `json:"items"`
 	MaxCandidates json.RawMessage `json:"max_candidates"`
 }
 
