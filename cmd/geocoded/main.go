@@ -66,6 +66,7 @@ func run(log *slog.Logger) error {
 	authn := &auth.Cached{Inner: inner, TTL: time.Minute, NegativeTTL: 10 * time.Second, Grace: 5 * time.Minute}
 
 	// resolver
+	norm := resolver.NewNormalizer(resolver.DefaultTerms())
 	var sources []resolver.Source
 	for _, s := range cfg.Sources {
 		if s == "fixture" {
@@ -73,45 +74,22 @@ func run(log *slog.Logger) error {
 			sources = append(sources, resolver.FixtureSource{})
 		}
 	}
-	pipe := resolver.NewPipeline(resolver.NewNormalizer(resolver.DefaultTerms()), sources...)
+	pipe := resolver.NewPipeline(norm, sources...)
 	pipe.SourceTimeout = cfg.SourceTimeout
 
 	m := metrics.New()
 	limiter := ratelimit.New()
 	reqlog := api.NewRequestLogger(st, 1024, m, log)
-	srv := api.New(api.Options{
-		Auth:              authn,
-		Store:             st,
-		Pipeline:          pipe,
-		Limiter:           limiter,
-		Metrics:           m,
-		Logger:            log,
-		ReqLog:            reqlog,
-		HashKey:           cfg.HashKey,
-		DefaultRatePerMin: cfg.DefaultRatePerMin,
-		MaxBodyBytes:      cfg.MaxBodyBytes,
-		DataVersion:       cfg.DataVersion,
-	})
+	srv := api.New(api.Options{Auth: authn, Store: st, Pipeline: pipe, Limiter: limiter, Metrics: m, Logger: log, ReqLog: reqlog, HashKey: cfg.HashKey, DefaultRatePerMin: cfg.DefaultRatePerMin, MaxBodyBytes: cfg.MaxBodyBytes, DataVersion: cfg.DataVersion})
 
-	public := &http.Server{
-		Addr:              cfg.Addr,
-		Handler:           srv,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
-	}
+	public := &http.Server{Addr: cfg.Addr, Handler: srv, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
 
 	adminMux := http.NewServeMux()
 	adminMux.HandleFunc("GET /metrics", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 		m.WritePrometheus(w)
 	})
-	admin := &http.Server{
-		Addr:              cfg.AdminAddr,
-		Handler:           adminMux,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	admin := &http.Server{Addr: cfg.AdminAddr, Handler: adminMux, ReadHeaderTimeout: 5 * time.Second}
 
 	// forget idle rate-limit buckets
 	go func() {
