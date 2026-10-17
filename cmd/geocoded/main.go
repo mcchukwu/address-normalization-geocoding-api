@@ -15,6 +15,7 @@ import (
 	"github.com/mcchukwu/address-normalization-geocoding-api/internal/auth"
 	"github.com/mcchukwu/address-normalization-geocoding-api/internal/config"
 	"github.com/mcchukwu/address-normalization-geocoding-api/internal/gazetteer"
+	"github.com/mcchukwu/address-normalization-geocoding-api/internal/keys"
 	"github.com/mcchukwu/address-normalization-geocoding-api/internal/metrics"
 	"github.com/mcchukwu/address-normalization-geocoding-api/internal/ratelimit"
 	"github.com/mcchukwu/address-normalization-geocoding-api/internal/resolver"
@@ -53,6 +54,12 @@ func run(log *slog.Logger) error {
 	// authentication: ask the auth service (or fixed dev keys), with a short cache
 	var inner auth.Introspector
 	switch cfg.AuthMode {
+	case "local":
+		pg, ok := st.(*store.Postgres)
+		if !ok {
+			return errors.New("AUTH_MODE=local needs DATABASE_URL")
+		}
+		inner = keys.Local{DB: pg.DB}
 	case "static":
 		s, err := auth.ParseStatic(cfg.AuthStatic)
 		if err != nil {
@@ -69,9 +76,22 @@ func run(log *slog.Logger) error {
 	norm := resolver.NewNormalizer(resolver.DefaultTerms())
 	var sources []resolver.Source
 	for _, s := range cfg.Sources {
-		if s == "fixture" {
+		switch s {
+		case "fixture":
 			log.Warn("fixture source enabled: approximate demo data, never for production")
 			sources = append(sources, resolver.FixtureSource{})
+		case "gazetteer":
+			pg, ok := st.(*store.Postgres)
+			if !ok {
+				return errors.New("the gazetteer source needs DATABASE_URL")
+			}
+			_, label, err := gazetteer.ActiveVersion(ctx, pg.DB)
+			if err != nil {
+				return err
+			}
+			cfg.DataVersion = label // answers name the build they came from; restart to pick up a new build
+			log.Info("gazetteer active", "version", label)
+			sources = append(sources, gazetteer.NewSource(pg.DB, norm))
 		}
 	}
 	pipe := resolver.NewPipeline(norm, sources...)
@@ -80,9 +100,12 @@ func run(log *slog.Logger) error {
 	m := metrics.New()
 	limiter := ratelimit.New()
 	reqlog := api.NewRequestLogger(st, 1024, m, log)
-	srv := api.New(api.Options{Auth: authn, Store: st, Pipeline: pipe, Limiter: limiter, Metrics: m, Logger: log, ReqLog: reqlog, HashKey: cfg.HashKey, DefaultRatePerMin: cfg.DefaultRatePerMin, MaxBodyBytes: cfg.MaxBodyBytes, DataVersion: cfg.DataVersion})
+	srv := api.New(api.Options{Auth: authn, Store: st, Pipeline: pipe, Limiter: limiter, Metrics: m, Logger: log,
+		ReqLog: reqlog, HashKey: cfg.HashKey, DefaultRatePerMin: cfg.DefaultRatePerMin,
+		MaxBodyBytes: cfg.MaxBodyBytes, DataVersion: cfg.DataVersion})
 
-	public := &http.Server{Addr: cfg.Addr, Handler: srv, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
+	public := &http.Server{Addr: cfg.Addr, Handler: srv, ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
 
 	adminMux := http.NewServeMux()
 	adminMux.HandleFunc("GET /metrics", func(w http.ResponseWriter, _ *http.Request) {
