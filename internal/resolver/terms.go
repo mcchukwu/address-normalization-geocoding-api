@@ -46,7 +46,7 @@ func DefaultTerms() Terms {
 			{8, "Borno", "borno", nil}, {9, "Cross River", "cross river", []string{"cross-river"}},
 			{10, "Delta", "delta", nil}, {11, "Ebonyi", "ebonyi", nil}, {12, "Edo", "edo", nil},
 			{13, "Ekiti", "ekiti", nil}, {14, "Enugu", "enugu", nil},
-			{15, "Federal Capital Territory", "federal capital territory", []string{"fct", "abuja", "fct abuja"}},
+			{15, "Federal Capital Territory", "federal capital territory", []string{"fct", "abuja", "fct abuja", "abuja federal capital territory"}},
 			{16, "Gombe", "gombe", nil}, {17, "Imo", "imo", nil}, {18, "Jigawa", "jigawa", nil},
 			{19, "Kaduna", "kaduna", nil}, {20, "Kano", "kano", nil}, {21, "Katsina", "katsina", nil},
 			{22, "Kebbi", "kebbi", nil}, {23, "Kogi", "kogi", nil}, {24, "Kwara", "kwara", nil},
