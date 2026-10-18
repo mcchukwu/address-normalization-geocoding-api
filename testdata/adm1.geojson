@@ -1,0 +1,6 @@
+{"type":"FeatureCollection","features":[
+ {"type":"Feature","properties":{"shapeName":"Lagos","shapeID":"TEST-ADM1-25","shapeGroup":"NGA","shapeType":"ADM1"},
+  "geometry":{"type":"Polygon","coordinates":[[[2.7,6.3],[4.4,6.3],[4.4,6.8],[2.7,6.8],[2.7,6.3]]]}},
+ {"type":"Feature","properties":{"shapeName":"Federal Capital Territory","shapeID":"TEST-ADM1-15","shapeGroup":"NGA","shapeType":"ADM1"},
+  "geometry":{"type":"Polygon","coordinates":[[[6.9,8.8],[7.7,8.8],[7.7,9.3],[6.9,9.3],[6.9,8.8]]]}}
+]}

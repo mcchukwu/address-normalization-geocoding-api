@@ -1,0 +1,8 @@
+{"type":"FeatureCollection","features":[
+ {"type":"Feature","properties":{"shapeName":"Ikeja","shapeID":"TEST-ADM2-1","shapeGroup":"NGA","shapeType":"ADM2"},
+  "geometry":{"type":"Polygon","coordinates":[[[3.30,6.57],[3.40,6.57],[3.40,6.65],[3.30,6.65],[3.30,6.57]]]}},
+ {"type":"Feature","properties":{"shapeName":"Eti-Osa","shapeID":"TEST-ADM2-2","shapeGroup":"NGA","shapeType":"ADM2"},
+  "geometry":{"type":"Polygon","coordinates":[[[3.40,6.38],[3.55,6.38],[3.55,6.50],[3.40,6.50],[3.40,6.38]]]}},
+ {"type":"Feature","properties":{"shapeName":"Abuja Municipal","shapeID":"TEST-ADM2-3","shapeGroup":"NGA","shapeType":"ADM2"},
+  "geometry":{"type":"Polygon","coordinates":[[[7.40,8.95],[7.60,8.95],[7.60,9.15],[7.40,9.15],[7.40,8.95]]]}}
+]}

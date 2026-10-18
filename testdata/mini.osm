@@ -1,0 +1,30 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!-- TEST FIXTURE: invented mini-map for tests. Names echo real places but geometry is approximate and made up. -->
+<osm version="0.6" generator="hand">
+  <node id="1" lat="6.5964" lon="3.3426"/>
+  <node id="2" lat="6.5990" lon="3.3480"/>
+  <node id="3" lat="6.6018" lon="3.3515"/>
+  <node id="4" lat="6.6100" lon="3.3500"/>
+  <node id="5" lat="6.6150" lon="3.3560"/>
+  <node id="6" lat="6.5990" lon="3.3500"/>
+  <node id="10" lat="6.6018" lon="3.3515"><tag k="place" v="suburb"/><tag k="name" v="Ikeja"/></node>
+  <node id="11" lat="6.6020" lon="3.3520"><tag k="amenity" v="bank"/><tag k="name" v="First Bank"/></node>
+  <node id="12" lat="6.4300" lon="3.4200"><tag k="amenity" v="bank"/><tag k="name" v="First Bank"/></node>
+  <node id="13" lat="6.6040" lon="3.3490"><tag k="amenity" v="school"/><tag k="name" v="Ikeja Grammar School"/></node>
+  <node id="14" lat="6.5990" lon="3.3480"><tag k="addr:housenumber" v="12"/><tag k="addr:street" v="Allen Avenue"/></node>
+  <node id="15" lat="9.0300" lon="7.4900"><tag k="place" v="suburb"/><tag k="name" v="Garki"/></node>
+  <node id="16" lat="6.4281" lon="3.4219"><tag k="place" v="suburb"/><tag k="name" v="Victoria Island"/><tag k="alt_name" v="V.I."/></node>
+  <node id="17" lat="6.5995" lon="3.3505"><tag k="amenity" v="marketplace"/><tag k="name" v="Computer Village"/></node>
+  <way id="100">
+    <nd ref="1"/><nd ref="2"/><nd ref="3"/>
+    <tag k="highway" v="primary"/><tag k="name" v="Allen Avenue"/><tag k="alt_name" v="Allen Ave"/>
+  </way>
+  <way id="101">
+    <nd ref="4"/><nd ref="5"/>
+    <tag k="highway" v="secondary"/><tag k="name" v="Adeniyi Jones Avenue"/>
+  </way>
+  <way id="102">
+    <nd ref="2"/><nd ref="6"/>
+    <tag k="highway" v="footway"/><tag k="name" v="Not A Road For Cars"/>
+  </way>
+</osm>
