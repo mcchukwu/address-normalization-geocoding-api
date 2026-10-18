@@ -187,3 +187,33 @@ func TestExpiredKeysAndBadInput(t *testing.T) {
 		t.Errorf("an unknown scope must be refused by the database")
 	}
 }
+
+func TestTrafficClassIsSetWhenIssuingAKey(t *testing.T) {
+	admin, _ := dbs(t)
+	ctx := context.Background()
+	a := Admin{DB: admin}
+	_, info, err := a.Create(ctx, CreateParams{TenantName: "Probe " + time.Now().Format("150405.000"), KeyName: "probe", Scopes: []string{"geocode"}, TrafficClass: "synthetic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		admin.Exec(`DELETE FROM app.api_keys WHERE tenant_id = $1::uuid`, info.TenantID)
+		admin.Exec(`DELETE FROM app.tenants WHERE tenant_id = $1::uuid`, info.TenantID)
+	})
+	var class string
+	admin.QueryRow(`SELECT traffic_class::text FROM app.tenants WHERE tenant_id = $1::uuid`, info.TenantID).Scan(&class)
+	if class != "synthetic" {
+		t.Errorf("tenant class: %q", class)
+	}
+	// a second key for the same tenant can change the class; an invalid class is refused
+	if _, _, err := a.Create(ctx, CreateParams{TenantID: info.TenantID, KeyName: "again", Scopes: []string{"geocode"}, TrafficClass: "loadtest"}); err != nil {
+		t.Fatal(err)
+	}
+	admin.QueryRow(`SELECT traffic_class::text FROM app.tenants WHERE tenant_id = $1::uuid`, info.TenantID).Scan(&class)
+	if class != "loadtest" {
+		t.Errorf("class should have been updated: %q", class)
+	}
+	if _, _, err := a.Create(ctx, CreateParams{TenantName: "x", KeyName: "k", Scopes: []string{"geocode"}, TrafficClass: "vip"}); err == nil {
+		t.Errorf("an unknown traffic class must be refused")
+	}
+}

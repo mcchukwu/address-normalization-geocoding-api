@@ -34,6 +34,9 @@ type CreateParams struct {
 	KeyName    string
 	Scopes     []string
 	Expires    *time.Time
+	// TrafficClass labels the tenant's traffic in metrics: real (default), synthetic or loadtest.
+	// Set it for probe and load-test tenants so they never count as customers.
+	TrafficClass string
 }
 
 // Create issues a key and returns the full text, which is the only time it is ever available.
@@ -52,13 +55,25 @@ func (a Admin) Create(ctx context.Context, p CreateParams) (full string, info Ke
 	}
 	defer tx.Rollback()
 
+	class := p.TrafficClass
+	if class == "" {
+		class = "real"
+	}
+	if class != "real" && class != "synthetic" && class != "loadtest" {
+		return "", info, fmt.Errorf("traffic class must be real, synthetic or loadtest, got %q", class)
+	}
 	tenantID := p.TenantID
 	if tenantID == "" {
 		if p.TenantName == "" {
 			return "", info, errors.New("give an existing tenant id or a name for a new tenant")
 		}
-		if err := tx.QueryRowContext(ctx, `INSERT INTO app.tenants (tenant_id, display_name) VALUES (gen_random_uuid(), $1) RETURNING tenant_id::text`,
-			p.TenantName).Scan(&tenantID); err != nil {
+		if err := tx.QueryRowContext(ctx, `INSERT INTO app.tenants (tenant_id, display_name, traffic_class) VALUES (gen_random_uuid(), $1, $2::app.traffic_class) RETURNING tenant_id::text`,
+			p.TenantName, class).Scan(&tenantID); err != nil {
+			return "", info, err
+		}
+	}
+	if p.TenantID != "" && p.TrafficClass != "" {
+		if _, err := tx.ExecContext(ctx, `UPDATE app.tenants SET traffic_class = $2::app.traffic_class WHERE tenant_id = $1::uuid`, tenantID, class); err != nil {
 			return "", info, err
 		}
 	}

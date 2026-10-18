@@ -48,11 +48,12 @@ func main() {
 		name := fs.String("name", "", "a label for this key, e.g. production")
 		scopes := fs.String("scopes", "geocode", "comma-separated: "+strings.Join(keys.Scopes, ", "))
 		expires := fs.String("expires", "", "optional lifetime such as 30d or 12h")
+		class := fs.String("traffic-class", "", "real (default), synthetic or loadtest: use synthetic for the probe so it never counts as a customer")
 		fs.Parse(os.Args[2:])
 		if *name == "" {
 			fail("-name is required")
 		}
-		p := keys.CreateParams{TenantID: *tenantID, TenantName: *tenantName, KeyName: *name, Scopes: strings.Split(*scopes, ",")}
+		p := keys.CreateParams{TenantID: *tenantID, TenantName: *tenantName, KeyName: *name, Scopes: strings.Split(*scopes, ","), TrafficClass: *class}
 		if *expires != "" {
 			d, err := parseLifetime(*expires)
 			if err != nil {
