@@ -232,7 +232,7 @@ func (s *Server) handleGeocode(w http.ResponseWriter, r *http.Request, st *reqSt
 			ExpiresAt: st.Start.UTC().Add(rawTextRetention)}
 	}
 	writeJSON(w, http.StatusOK, geocodeResponse{answerDTO: toAnswerDTO(req.Address, ans),
-		DataVersion: s.o.DataVersion, RequestID: st.ID})
+		DataVersion: s.dataVersionLabel(), RequestID: st.ID})
 }
 
 // ---- POST /v1/geocode:batch
@@ -296,7 +296,7 @@ func (s *Server) handleBatch(w http.ResponseWriter, r *http.Request, st *reqStat
 			s.o.Metrics.ObserveResult(prec, class)
 		}
 	}
-	writeJSON(w, http.StatusOK, batchResponse{Results: results, DataVersion: s.o.DataVersion, RequestID: st.ID})
+	writeJSON(w, http.StatusOK, batchResponse{Results: results, DataVersion: s.dataVersionLabel(), RequestID: st.ID})
 }
 
 // ---- POST /v1/corrections

@@ -98,6 +98,7 @@ func TestImportRunReportAgainstTheRealGazetteer(t *testing.T) {
 	}
 
 	pipe := resolver.NewPipeline(n, gazetteer.NewSource(db, n))
+	pipe.SourceTimeout = 10 * time.Second
 	runID, err := Run(ctx, db, pipe, RunOptions{Set: setName, GitSHA: "test", VersionID: rep.VersionID})
 	if err != nil {
 		t.Fatal(err)

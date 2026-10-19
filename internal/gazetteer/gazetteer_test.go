@@ -140,6 +140,7 @@ func TestResolveThroughThePipeline(t *testing.T) {
 	norm := resolver.NewNormalizer(resolver.DefaultTerms())
 	buildTestVersion(t, admin, norm)
 	pipe := resolver.NewPipeline(norm, NewSource(api, norm))
+	pipe.SourceTimeout = 10 * time.Second // a cold database must not turn a correct answer into a timeout
 	geocode := func(addr string) resolver.Answer {
 		t.Helper()
 		return pipe.Geocode(context.Background(), addr, resolver.Hints{}, 10)
@@ -232,4 +233,37 @@ func TestResolveThroughThePipeline(t *testing.T) {
 			t.Errorf("want no fix, no candidates, landmark_not_matched: %+v", a)
 		}
 	})
+}
+
+func TestWatcherFollowsNewBuildsWithoutARestart(t *testing.T) {
+	admin, _ := connect(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// start from "nothing active"
+	var prevID sql.NullInt64
+	admin.QueryRow(`SELECT data_version_id FROM gaz.active_version`).Scan(&prevID)
+	admin.Exec(`DELETE FROM gaz.active_version`)
+	t.Cleanup(func() {
+		if prevID.Valid {
+			admin.Exec(`INSERT INTO gaz.active_version (singleton, data_version_id) VALUES (true, $1) ON CONFLICT (singleton) DO UPDATE SET data_version_id = EXCLUDED.data_version_id`, prevID.Int64)
+		}
+	})
+
+	w := Watch(ctx, admin, 40*time.Millisecond, nil)
+	if _, ok := w.Label(); ok {
+		t.Fatalf("nothing is active, so the watcher must say not ready")
+	}
+	norm := resolver.NewNormalizer(resolver.DefaultTerms())
+	rep := buildTestVersion(t, admin, norm) // activates its build
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if label, ok := w.Label(); ok {
+			if label != rep.Label {
+				t.Fatalf("label %q, want %q", label, rep.Label)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("the watcher never noticed the activated build")
 }

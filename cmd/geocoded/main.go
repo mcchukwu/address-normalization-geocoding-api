@@ -74,23 +74,24 @@ func run(log *slog.Logger) error {
 
 	// resolver
 	norm := resolver.NewNormalizer(resolver.DefaultTerms())
+	var watcher *gazetteer.Watcher
 	var sources []resolver.Source
+	useGazetteer := false
 	for _, s := range cfg.Sources {
 		switch s {
 		case "fixture":
 			log.Warn("fixture source enabled: approximate demo data, never for production")
 			sources = append(sources, resolver.FixtureSource{})
 		case "gazetteer":
+			useGazetteer = true
 			pg, ok := st.(*store.Postgres)
 			if !ok {
 				return errors.New("the gazetteer source needs DATABASE_URL")
 			}
-			_, label, err := gazetteer.ActiveVersion(ctx, pg.DB)
-			if err != nil {
-				return err
+			watcher = gazetteer.Watch(ctx, pg.DB, 30*time.Second, log)
+			if _, ok := watcher.Label(); !ok {
+				log.Warn("no active gazetteer yet: geocoding answers 503 not_ready until you run scripts/build-gazetteer.sh (no restart needed)")
 			}
-			cfg.DataVersion = label // answers name the build they came from; restart to pick up a new build
-			log.Info("gazetteer active", "version", label)
 			sources = append(sources, gazetteer.NewSource(pg.DB, norm))
 		}
 	}
@@ -100,9 +101,14 @@ func run(log *slog.Logger) error {
 	m := metrics.New()
 	limiter := ratelimit.New()
 	reqlog := api.NewRequestLogger(st, 1024, m, log)
-	srv := api.New(api.Options{Auth: authn, Store: st, Pipeline: pipe, Limiter: limiter, Metrics: m, Logger: log,
+	opts := api.Options{Auth: authn, Store: st, Pipeline: pipe, Limiter: limiter, Metrics: m, Logger: log,
+		RequireGazetteer: useGazetteer,
 		ReqLog: reqlog, HashKey: cfg.HashKey, DefaultRatePerMin: cfg.DefaultRatePerMin,
-		MaxBodyBytes: cfg.MaxBodyBytes, DataVersion: cfg.DataVersion})
+		MaxBodyBytes: cfg.MaxBodyBytes, DataVersion: cfg.DataVersion}
+	if watcher != nil {
+		opts.DataVersionFn = watcher.Label // follows new builds with no restart; 503 until one exists
+	}
+	srv := api.New(opts)
 
 	public := &http.Server{Addr: cfg.Addr, Handler: srv, ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}

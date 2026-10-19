@@ -37,7 +37,13 @@ type Options struct {
 	DefaultRatePerMin int
 	MaxBodyBytes      int64
 	DataVersion       string
-	Now               func() time.Time
+	// RequireGazetteer, when true, makes the server return 503 for geocode endpoints
+	// until a gazetteer build is active. Set to true when SOURCES=gazetteer.
+	RequireGazetteer  bool
+	// DataVersionFn, when set, reports the gazetteer build in use and whether one is active. A server
+	// whose gazetteer is not built yet answers geocoding with 503 not_ready instead of pretending nothing was found.
+	DataVersionFn func() (label string, ready bool)
+	Now           func() time.Time
 }
 
 // Server implements http.Handler.
@@ -109,6 +115,26 @@ func New(o Options) *Server {
 	return s
 }
 
+func (s *Server) gazetteerReady() bool {
+	if !s.o.RequireGazetteer {
+		return true
+	}
+	if s.o.DataVersionFn == nil {
+		return true
+	}
+	_, ok := s.o.DataVersionFn()
+	return ok
+}
+
+// dataVersionLabel is what answers report as data_version.
+func (s *Server) dataVersionLabel() string {
+	if s.o.DataVersionFn != nil {
+		l, _ := s.o.DataVersionFn()
+		return l
+	}
+	return s.o.DataVersion
+}
+
 // Routes lists the registered "METHOD /path" patterns (used by the contract-drift test).
 func (s *Server) Routes() []string {
 	out := append([]string(nil), s.routes...)
@@ -124,6 +150,11 @@ func (s *Server) route(pattern, endpoint, scope string, h handlerFunc) {
 		if !s.authenticate(w, r, st, scope) {
 			return
 		}
+		if (endpoint == "geocode" || endpoint == "geocode_batch") && !s.gazetteerReady() {
+			fail(w, st, newProblem(http.StatusServiceUnavailable, "not_ready", "Not ready",
+				"The gazetteer has not been built yet. Run scripts/build-gazetteer.sh; no restart is needed afterwards."))
+			return
+		}
 		h(w, r, st)
 	})
 }
@@ -133,6 +164,10 @@ func (s *Server) open(pattern, endpoint string, h handlerFunc) {
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		st := stateOf(r)
 		st.Endpoint = endpoint
+		if endpoint == "readyz" && !s.gazetteerReady() {
+			fail(w, st, newProblem(http.StatusServiceUnavailable, "not_ready", "Not ready", "The gazetteer has not been built yet."))
+			return
+		}
 		h(w, r, st)
 	})
 }
