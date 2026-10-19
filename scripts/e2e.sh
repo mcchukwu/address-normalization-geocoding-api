@@ -52,10 +52,9 @@ ok "five binaries built"
 
 step "database: create, migrate, stage the test map, build the gazetteer"
 psql "$PG_ADMIN_URL" -q -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$DB\"" || exit 2
-for f in $(ls migrations/*.up.sql | sort); do
-  psql "$ADMIN_DB_URL" -q -v ON_ERROR_STOP=1 -f "$f" >/dev/null 2>"$TMP/mig.err" || { cat "$TMP/mig.err"; echo "migration $f failed"; exit 2; }
-done
-ok "all migrations applied"
+DATABASE_URL="$ADMIN_DB_URL" scripts/migrate.sh >"$TMP/mig.out" 2>"$TMP/mig.err" || { cat "$TMP/mig.err"; echo "migrations failed"; exit 2; }
+ok "all migrations applied (scripts/migrate.sh)"
+check "running the migrations again applies nothing" "0 migration(s) applied" "$(DATABASE_URL="$ADMIN_DB_URL" scripts/migrate.sh 2>/dev/null)"
 psql "$ADMIN_DB_URL" -q -v ON_ERROR_STOP=1 -c "CREATE ROLE \"$APP_ROLE\" LOGIN PASSWORD '$APP_PW' IN ROLE geocode_api" || exit 2
 psql "$ADMIN_DB_URL" -q -v ON_ERROR_STOP=1 -c 'CREATE SCHEMA IF NOT EXISTS osm_stage' || exit 2
 osm2pgsql -d "$ADMIN_DB_URL" -O flex -S scripts/osm2pgsql-gazetteer.lua --slim --drop testdata/mini.osm >"$TMP/osm.log" 2>&1 \
