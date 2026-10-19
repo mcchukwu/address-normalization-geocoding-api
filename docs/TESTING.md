@@ -46,6 +46,12 @@ Things to look for: an answer on the right road; `precision` honest about what i
 come back as `locality`, not `street`); `warnings` explaining a missing pin (`low_confidence`,
 `ambiguous_place`, `landmark_not_matched`).
 
+## Looking at real answers
+
+    API_KEY=gk_... scripts/try.sh "opp. first bank, allen avenue, ikeja"   # one address, explained
+    API_KEY=gk_... scripts/sanity.sh                                       # 18 addresses, one line each
+    API_KEY=gk_... scripts/sanity.sh my-addresses.txt                      # your own list
+
 ## Not covered yet
 
 A load test of the 300 ms p95 target on the full gazetteer: run it after the real data load, because
