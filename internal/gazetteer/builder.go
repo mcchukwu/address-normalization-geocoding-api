@@ -64,12 +64,8 @@ func Build(ctx context.Context, db *sql.DB, o Options) (Report, error) {
 		o.Log = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
 	r := Report{Label: o.Label, Counts: map[string]int{}}
-
-	for _, t := range []string{"osm_stage.roads", "osm_stage.places", "osm_stage.addresses"} {
-		var reg sql.NullString
-		if err := db.QueryRowContext(ctx, `SELECT to_regclass($1)::text`, t).Scan(&reg); err != nil || !reg.Valid {
-			return r, fmt.Errorf("%s not found: run osm2pgsql with scripts/osm2pgsql-gazetteer.lua first", t)
-		}
+	if err := requireStaging(ctx, db); err != nil {
+		return r, err
 	}
 
 	tx, err := db.BeginTx(ctx, nil)
@@ -85,108 +81,24 @@ func Build(ctx context.Context, db *sql.DB, o Options) (Report, error) {
 	}
 	v := r.VersionID
 
-	if err := loadBoundaries(ctx, tx, o, v); err != nil {
-		return r, err
+	steps := []struct {
+		name string
+		run  func() error
+	}{
+		{"boundaries loaded", func() error { return loadBoundaries(ctx, tx, o, v) }},
+		{"osm features loaded", func() error { return stageFeatures(ctx, tx, o.Norm, v) }},
+		{"spatial assignment done", func() error { return assignAreas(ctx, tx, v) }},
+		{"names loaded", func() error { return loadNames(ctx, tx, o.Norm, v) }},
 	}
-	o.Log.Info("boundaries loaded")
-
-	stage := []struct{ name, sql string }{
-		{"roads", `INSERT INTO gaz.features (data_version_id, kind, category, geom, source, source_id, licence, fetched_at)
-			SELECT $1, 'road', r.highway, r.geom, 'osm', 'way/' || r.osm_id, 'ODbL', now()
-			FROM osm_stage.roads r WHERE r.geom IS NOT NULL AND NOT ST_IsEmpty(r.geom)`},
-		{"places", `INSERT INTO gaz.features (data_version_id, kind, category, geom, source, source_id, licence, fetched_at)
-			SELECT $1,
-			  CASE WHEN p.place IN ('city','town','village','suburb','neighbourhood','quarter','hamlet','locality','borough')
-			       THEN 'locality'::gaz.feature_kind ELSE 'place'::gaz.feature_kind END,
-			  COALESCE(p.category, p.place),
-			  CASE WHEN GeometryType(p.geom) IN ('POLYGON','MULTIPOLYGON') THEN ST_MakeValid(p.geom) ELSE p.geom END,
-			  'osm', CASE p.osm_type WHEN 'N' THEN 'node' WHEN 'W' THEN 'way' ELSE 'relation' END || '/' || p.osm_id,
-			  'ODbL', now()
-			FROM osm_stage.places p WHERE p.geom IS NOT NULL AND NOT ST_IsEmpty(p.geom)`},
-		{"addresses", `INSERT INTO gaz.features (data_version_id, kind, geom, house_number, street_norm, source, source_id, licence, fetched_at)
-			SELECT $1, 'address', ST_PointOnSurface(a.geom), lower(btrim(a.housenumber)), a.street,
-			  'osm', CASE a.osm_type WHEN 'N' THEN 'node' WHEN 'W' THEN 'way' ELSE 'relation' END || '/' || a.osm_id,
-			  'ODbL', now()
-			FROM osm_stage.addresses a WHERE a.housenumber IS NOT NULL AND a.geom IS NOT NULL AND NOT ST_IsEmpty(a.geom)`},
-	}
-	for _, s := range stage {
-		if _, err := tx.ExecContext(ctx, s.sql, v); err != nil {
-			return r, fmt.Errorf("stage %s into gaz.features: %w", s.name, err)
-		}
-	}
-	if err := normaliseStreets(ctx, tx, o.Norm, v); err != nil {
-		return r, err
-	}
-	o.Log.Info("osm features loaded")
-
-	if _, err := tx.ExecContext(ctx, `ANALYZE gaz.features`); err != nil {
-		return r, err
-	}
-	// Which LGA and state is each feature in? Spatial joins on the feature's representative point.
-	joins := []string{
-		`UPDATE gaz.features l SET state_id = s.id, parent_id = s.id FROM gaz.features s
-		   WHERE l.data_version_id = $1 AND s.data_version_id = $1 AND l.kind = 'lga' AND s.kind = 'state'
-		     AND ST_Intersects(s.geom, l.rep_point)`,
-		`UPDATE gaz.features f SET lga_id = l.id, state_id = l.state_id FROM gaz.features l
-		   WHERE f.data_version_id = $1 AND l.data_version_id = $1 AND l.kind = 'lga'
-		     AND f.kind IN ('locality','road','place','address') AND ST_Contains(l.geom, f.rep_point)`,
-		`UPDATE gaz.features f SET state_id = s.id FROM gaz.features s
-		   WHERE f.data_version_id = $1 AND s.data_version_id = $1 AND s.kind = 'state'
-		     AND f.kind IN ('locality','road','place','address') AND f.state_id IS NULL AND ST_Contains(s.geom, f.rep_point)`,
-	}
-	for _, q := range joins {
-		if _, err := tx.ExecContext(ctx, q, v); err != nil {
-			return r, fmt.Errorf("spatial assignment: %w", err)
-		}
-	}
-	o.Log.Info("spatial assignment done")
-
-	// Names: read every staged name, normalise it in Go (the single normaliser), then bulk-copy.
-	var rows []nameRow
-	for _, q := range []string{
-		`SELECT f.id, concat_ws(';', s.name, s.alt_names) FROM osm_stage.roads s
-		   JOIN gaz.features f ON f.data_version_id = $1 AND f.source = 'osm' AND f.kind = 'road' AND f.source_id = 'way/' || s.osm_id`,
-		`SELECT f.id, concat_ws(';', s.name, s.alt_names) FROM osm_stage.places s
-		   JOIN gaz.features f ON f.data_version_id = $1 AND f.source = 'osm' AND f.kind IN ('locality','place')
-		    AND f.source_id = CASE s.osm_type WHEN 'N' THEN 'node' WHEN 'W' THEN 'way' ELSE 'relation' END || '/' || s.osm_id`,
-	} {
-		got, err := queryNames(ctx, tx, q, v)
-		if err != nil {
+	for _, step := range steps {
+		if err := step.run(); err != nil {
 			return r, err
 		}
-		rows = append(rows, got...)
+		o.Log.Info(step.name)
 	}
-	n, err := copyNames(ctx, tx, o.Norm, rows)
-	if err != nil {
+	if err := summarise(ctx, tx, v, &r); err != nil {
 		return r, err
 	}
-	r.Names = n
-
-	counts, err := tx.QueryContext(ctx, `SELECT kind::text, count(*) FROM gaz.features WHERE data_version_id = $1 GROUP BY kind`, v)
-	if err != nil {
-		return r, err
-	}
-	for counts.Next() {
-		var k string
-		var c int
-		if err := counts.Scan(&k, &c); err != nil {
-			counts.Close()
-			return r, err
-		}
-		r.Counts[k] = c
-	}
-	if counts.Err() != nil {
-		return r, counts.Err()
-	}
-	counts.Close()
-	// Names: states and LGAs were counted when loaded; recount from the table for an honest total.
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM gaz.names n JOIN gaz.features f ON f.id = n.feature_id WHERE f.data_version_id = $1`, v).Scan(&r.Names); err != nil {
-		return r, err
-	}
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM gaz.features WHERE data_version_id = $1 AND kind IN ('locality','road','place','address') AND lga_id IS NULL`, v).Scan(&r.Unassigned); err != nil {
-		return r, err
-	}
-
 	if o.Activate {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO gaz.active_version (singleton, data_version_id) VALUES (true, $1)
 			ON CONFLICT (singleton) DO UPDATE SET data_version_id = EXCLUDED.data_version_id`, v); err != nil {
@@ -204,6 +116,116 @@ func Build(ctx context.Context, db *sql.DB, o Options) (Report, error) {
 	}
 	r.Elapsed = time.Since(start)
 	return r, nil
+}
+
+func requireStaging(ctx context.Context, db *sql.DB) error {
+	for _, t := range []string{"osm_stage.roads", "osm_stage.places", "osm_stage.addresses"} {
+		var reg sql.NullString
+		if err := db.QueryRowContext(ctx, `SELECT to_regclass($1)::text`, t).Scan(&reg); err != nil || !reg.Valid {
+			return fmt.Errorf("%s not found: run osm2pgsql with scripts/osm2pgsql-gazetteer.lua first", t)
+		}
+	}
+	return nil
+}
+
+// stageSQL copies the osm2pgsql staging tables into gaz.features, one statement per kind of feature.
+var stageSQL = []struct{ name, sql string }{
+	{"roads", `INSERT INTO gaz.features (data_version_id, kind, category, geom, source, source_id, licence, fetched_at)
+		SELECT $1, 'road', r.highway, r.geom, 'osm', 'way/' || r.osm_id, 'ODbL', now()
+		FROM osm_stage.roads r WHERE r.geom IS NOT NULL AND NOT ST_IsEmpty(r.geom)`},
+	{"places", `INSERT INTO gaz.features (data_version_id, kind, category, geom, source, source_id, licence, fetched_at)
+		SELECT $1,
+		  CASE WHEN p.place IN ('city','town','village','suburb','neighbourhood','quarter','hamlet','locality','borough')
+		       THEN 'locality'::gaz.feature_kind ELSE 'place'::gaz.feature_kind END,
+		  COALESCE(p.category, p.place),
+		  CASE WHEN GeometryType(p.geom) IN ('POLYGON','MULTIPOLYGON') THEN ST_MakeValid(p.geom) ELSE p.geom END,
+		  'osm', CASE p.osm_type WHEN 'N' THEN 'node' WHEN 'W' THEN 'way' ELSE 'relation' END || '/' || p.osm_id,
+		  'ODbL', now()
+		FROM osm_stage.places p WHERE p.geom IS NOT NULL AND NOT ST_IsEmpty(p.geom)`},
+	{"addresses", `INSERT INTO gaz.features (data_version_id, kind, geom, house_number, street_norm, source, source_id, licence, fetched_at)
+		SELECT $1, 'address', ST_PointOnSurface(a.geom), lower(btrim(a.housenumber)), a.street,
+		  'osm', CASE a.osm_type WHEN 'N' THEN 'node' WHEN 'W' THEN 'way' ELSE 'relation' END || '/' || a.osm_id,
+		  'ODbL', now()
+		FROM osm_stage.addresses a WHERE a.housenumber IS NOT NULL AND a.geom IS NOT NULL AND NOT ST_IsEmpty(a.geom)`},
+}
+
+func stageFeatures(ctx context.Context, tx *sql.Tx, norm *resolver.Normalizer, v int) error {
+	for _, s := range stageSQL {
+		if _, err := tx.ExecContext(ctx, s.sql, v); err != nil {
+			return fmt.Errorf("stage %s into gaz.features: %w", s.name, err)
+		}
+	}
+	return normaliseStreets(ctx, tx, norm, v)
+}
+
+// areaJoinSQL says which LGA and state each feature is in, by spatial join on its representative point.
+var areaJoinSQL = []string{
+	`UPDATE gaz.features l SET state_id = s.id, parent_id = s.id FROM gaz.features s
+	   WHERE l.data_version_id = $1 AND s.data_version_id = $1 AND l.kind = 'lga' AND s.kind = 'state'
+	     AND ST_Intersects(s.geom, l.rep_point)`,
+	`UPDATE gaz.features f SET lga_id = l.id, state_id = l.state_id FROM gaz.features l
+	   WHERE f.data_version_id = $1 AND l.data_version_id = $1 AND l.kind = 'lga'
+	     AND f.kind IN ('locality','road','place','address') AND ST_Contains(l.geom, f.rep_point)`,
+	`UPDATE gaz.features f SET state_id = s.id FROM gaz.features s
+	   WHERE f.data_version_id = $1 AND s.data_version_id = $1 AND s.kind = 'state'
+	     AND f.kind IN ('locality','road','place','address') AND f.state_id IS NULL AND ST_Contains(s.geom, f.rep_point)`,
+}
+
+func assignAreas(ctx context.Context, tx *sql.Tx, v int) error {
+	if _, err := tx.ExecContext(ctx, `ANALYZE gaz.features`); err != nil {
+		return err
+	}
+	for _, q := range areaJoinSQL {
+		if _, err := tx.ExecContext(ctx, q, v); err != nil {
+			return fmt.Errorf("spatial assignment: %w", err)
+		}
+	}
+	return nil
+}
+
+// namesSQL reads every staged name with the feature it belongs to.
+var namesSQL = []string{
+	`SELECT f.id, concat_ws(';', s.name, s.alt_names) FROM osm_stage.roads s
+	   JOIN gaz.features f ON f.data_version_id = $1 AND f.source = 'osm' AND f.kind = 'road' AND f.source_id = 'way/' || s.osm_id`,
+	`SELECT f.id, concat_ws(';', s.name, s.alt_names) FROM osm_stage.places s
+	   JOIN gaz.features f ON f.data_version_id = $1 AND f.source = 'osm' AND f.kind IN ('locality','place')
+	    AND f.source_id = CASE s.osm_type WHEN 'N' THEN 'node' WHEN 'W' THEN 'way' ELSE 'relation' END || '/' || s.osm_id`,
+}
+
+// loadNames normalises every staged name in Go (the single normaliser) and bulk-copies gaz.names.
+func loadNames(ctx context.Context, tx *sql.Tx, norm *resolver.Normalizer, v int) error {
+	var rows []nameRow
+	for _, q := range namesSQL {
+		got, err := queryNames(ctx, tx, q, v)
+		if err != nil {
+			return err
+		}
+		rows = append(rows, got...)
+	}
+	_, err := copyNames(ctx, tx, norm, rows)
+	return err
+}
+
+// summarise fills the report from what the build produced.
+func summarise(ctx context.Context, tx *sql.Tx, v int, r *Report) error {
+	rs, err := tx.QueryContext(ctx, `SELECT kind::text, count(*) FROM gaz.features WHERE data_version_id = $1 GROUP BY kind`, v)
+	if err != nil {
+		return err
+	}
+	for rs.Next() {
+		var k string
+		var c int
+		if err := rs.Scan(&k, &c); err != nil {
+			rs.Close()
+			return err
+		}
+		r.Counts[k] = c
+	}
+	rs.Close()
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM gaz.names n JOIN gaz.features f ON f.id = n.feature_id WHERE f.data_version_id = $1`, v).Scan(&r.Names); err != nil {
+		return err
+	}
+	return tx.QueryRowContext(ctx, `SELECT count(*) FROM gaz.features WHERE data_version_id = $1 AND kind IN ('locality','road','place','address') AND lga_id IS NULL`, v).Scan(&r.Unassigned)
 }
 
 func loadBoundaries(ctx context.Context, tx *sql.Tx, o Options, v int) error {
@@ -339,9 +361,6 @@ func normaliseStreets(ctx context.Context, tx *sql.Tx, norm *resolver.Normalizer
 			return err
 		}
 		raws = append(raws, s)
-	}
-	if rs.Err() != nil {
-		return rs.Err()
 	}
 	rs.Close()
 	for _, raw := range raws {
