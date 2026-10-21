@@ -37,6 +37,8 @@ for c in d["candidates"]:
     print(f'candidate   {c["precision"]:<9} conf {c["confidence"]:<5} {c["lat"]:.5f}, {c["lng"]:.5f}  ({c["source"]})')
 print("warnings   ", ", ".join(d["warnings"]) or "none")
 print("data version", d["data_version"])
+if any(c["source"] == "fixture" for c in d["candidates"]):
+    print("\nNOTE: these candidates come from the demo FIXTURE, not your gazetteer. Set SOURCES=gazetteer and recreate the API.")
 PY
     ;;
   401) echo "401: the API does not accept this key."

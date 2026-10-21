@@ -43,6 +43,7 @@ import json, sys
 a, d = sys.argv[1], json.loads(sys.argv[2])
 r = d["result"]
 pos = f'{r["lat"]:.4f},{r["lng"]:.4f}' if r else "-"
-print(f'{a[:45]:<46} {(r["precision"] if r else "none"):<9} {(r["confidence"] if r else ""):<5} {pos:<20} {",".join(d["warnings"])}')
+src = "  <-- DEMO FIXTURE: set SOURCES=gazetteer" if any(c["source"] == "fixture" for c in d["candidates"]) else ""
+print(f'{a[:45]:<46} {(r["precision"] if r else "none"):<9} {(r["confidence"] if r else ""):<5} {pos:<20} {",".join(d["warnings"])}{src}')
 PY
 done <<<"$ADDRS"
