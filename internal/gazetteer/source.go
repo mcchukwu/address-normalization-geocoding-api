@@ -40,139 +40,228 @@ type hit struct {
 
 // Resolve implements resolver.Source.
 func (s *Source) Resolve(ctx context.Context, c resolver.Components) ([]resolver.Candidate, error) {
-	var out []resolver.Candidate
-	add := func(prec resolver.Precision, at point, conf float64, ambiguous bool, matched string) {
-		if conf <= 0 {
-			return
-		}
-		out = append(out, resolver.Candidate{Lat: at.lat, Lng: at.lng, Precision: prec, Confidence: round2(conf),
-			Source: "gazetteer", Matched: []string{matched}, Ambiguous: ambiguous})
-	}
-
-	stateID, statePt, err := s.state(ctx, c.State)
-	if err != nil {
-		return nil, err
-	}
-	if stateID != 0 {
-		add(resolver.State, statePt, 0.9, false, "state")
-	}
-
-	// Unclassified place names: the first is usually the neighbourhood, but a misspelt road word
-	// ("allen avenu") also lands here, so every one is tried as a locality and, if there is no
-	// street yet, as a road.
-	var texts []string
+	r := &resolution{src: s, ctx: ctx, c: c}
 	for _, t := range append([]string{c.Area}, c.Other...) {
 		if t != "" {
-			texts = append(texts, t)
+			r.places = append(r.places, t)
 		}
 	}
+	for _, step := range []func() error{r.addState, r.addLocality, r.addLGA, r.addStreet, r.addLandmarks} {
+		if err := step(); err != nil {
+			return nil, err
+		}
+	}
+	return r.out, nil
+}
 
-	// Locality: the place name that gives the rest of the address a neighbourhood to be in.
-	var loc *point
-	locText := ""
-	var locBest hit
-	locConf, locAmb := 0.0, false
-	for _, text := range texts {
-		hits, err := s.find(ctx, query{key: s.Norm.NameKey(text), kind: "locality", state: stateID, minSim: 0.45, limit: 10})
-		if err != nil {
-			return nil, err
-		}
-		if best, conf, rivals, ok := choose(hits, false); ok && conf > locConf {
-			locBest, locConf, locAmb, locText = best, conf, rivals > 0, text
-		}
-	}
-	if locText != "" {
-		add(resolver.Locality, locBest.at, locConf, locAmb, "area")
-		p := locBest.at
-		loc = &p
-	}
-	// The area text may name an LGA instead (Ikeja is both).
-	if c.LGA == "" {
-		for _, text := range texts {
-			lh, err := s.find(ctx, query{key: s.Norm.NameKey(text), kind: "lga", state: stateID, minSim: 0.6, limit: 3})
-			if err != nil {
-				return nil, err
-			}
-			if best, conf, rivals, ok := choose(lh, false); ok {
-				add(resolver.LGA, best.at, 0.55*conf, rivals > 0, "area")
-				break
-			}
-		}
-	}
-	if c.LGA != "" {
-		hits, err := s.find(ctx, query{key: s.Norm.NameKey(c.LGA), kind: "lga", state: stateID, minSim: 0.5, limit: 3})
-		if err != nil {
-			return nil, err
-		}
-		if best, conf, rivals, ok := choose(hits, false); ok {
-			add(resolver.LGA, best.at, 0.6*conf, rivals > 0, "lga")
-		}
-	}
+// resolution is the state of resolving one address: what has been found so far, which later steps
+// use as context (a neighbourhood narrows the street search, a street narrows the landmark search).
+type resolution struct {
+	src     *Source
+	ctx     context.Context
+	c       resolver.Components
+	stateID int64
+	// places are the unclassified names: usually the neighbourhood, but a misspelt road word
+	// ("allen avenu") also lands here, so each is tried as a locality and, failing a street, as a road.
+	places   []string
+	locality *point
+	locText  string
+	street   *point
+	out      []resolver.Candidate
+}
 
-	// Street: confidence also falls with road length, because a "street" answer claims a 300 m radius
-	// and a long road cannot honestly promise that from one point.
-	var streetPt *point
-	streetTexts := []string{}
-	if c.Street != "" {
-		streetTexts = append(streetTexts, c.Street)
-	} else {
-		for _, t := range texts {
-			if t != locText {
-				streetTexts = append(streetTexts, t)
-			}
-		}
+func (r *resolution) add(prec resolver.Precision, at point, conf float64, ambiguous bool, matched string) {
+	if conf <= 0 {
+		return
 	}
-	for si, streetText := range streetTexts {
-		if si > 0 && streetPt != nil {
-			break
-		}
-		key := s.Norm.NameKey(streetText)
-		minSim := 0.5
-		if c.Street == "" {
-			minSim = 0.6 // a guess from an unclassified word needs a closer match
-		}
-		hits, err := s.find(ctx, query{key: key, kind: "road", state: stateID, minSim: minSim, limit: 60, ctx: loc})
-		if err != nil {
-			return nil, err
-		}
-		if best, conf, rivals, ok := choose(hits, loc != nil); ok {
-			extent := roadExtent(hits, best, loc != nil)
-			add(resolver.Street, best.at, conf*extentFactor(extent), rivals > 0, "street")
-			p := best.at
-			streetPt = &p
-		}
-		if c.HouseNumber != "" {
-			if ap, found, many, err := s.address(ctx, c.HouseNumber, key, stateID, firstPoint(streetPt, loc)); err != nil {
-				return nil, err
-			} else if found {
-				f := 0.95
-				if many {
-					f = 0.65
-				}
-				add(resolver.Building, ap, f, many, "house_number")
-			}
-		}
-	}
+	r.out = append(r.out, resolver.Candidate{Lat: at.lat, Lng: at.lng, Precision: prec, Confidence: round2(conf),
+		Source: "gazetteer", Matched: []string{matched}, Ambiguous: ambiguous})
+}
 
-	// Landmarks: the named place nearest the street or neighbourhood the address already gave.
-	around := firstPoint(streetPt, loc)
-	for _, l := range c.Landmarks {
-		hits, err := s.find(ctx, query{key: s.Norm.NameKey(l.Name), kind: "place", state: stateID, minSim: 0.5, limit: 40, ctx: around})
+func (r *resolution) find(kind, text string, minSim float64, limit int, around *point) ([]hit, error) {
+	return r.src.find(r.ctx, query{key: r.src.Norm.NameKey(text), kind: kind, state: r.stateID, minSim: minSim, limit: limit, ctx: around})
+}
+
+func (r *resolution) addState() error {
+	id, at, err := r.src.state(r.ctx, r.c.State)
+	if err != nil {
+		return err
+	}
+	r.stateID = id
+	if id != 0 {
+		r.add(resolver.State, at, 0.9, false, "state")
+	}
+	return nil
+}
+
+// addLocality picks the place name that gives the rest of the address a neighbourhood to be in. Names
+// are written specific first ("trans amadi, port harcourt"), so the first one that matches reasonably wins;
+// a later, more general name (the city) only wins if nothing before it matched.
+func (r *resolution) addLocality() error {
+	var best hit
+	conf, ambiguous := 0.0, false
+	for _, text := range r.places {
+		hits, err := r.find("locality", text, 0.45, 10, nil)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		best, conf, rivals, ok := choose(hits, around != nil)
+		h, c, rivals, ok := choose(hits, ctxNone)
 		if !ok {
 			continue
 		}
-		if l.Relation != "" {
-			// "opposite First Bank" puts the address near the bank, not on it: street-class at best.
-			add(resolver.Street, best.at, math.Min(conf, 0.8), rivals > 0, "landmark:"+l.Name)
-		} else {
-			add(resolver.Building, best.at, math.Min(conf, 0.9), rivals > 0, "landmark:"+l.Name)
+		if c > conf && (conf == 0 || conf < 0.5) {
+			best, conf, ambiguous, r.locText = h, c, rivals > 0, text
+		}
+		if conf >= 0.5 {
+			break
 		}
 	}
-	return out, nil
+	if r.locText != "" {
+		r.add(resolver.Locality, best.at, conf, ambiguous, "area")
+		p := best.at
+		r.locality = &p
+	}
+	return nil
+}
+
+// addLGA reads an LGA from the text: the named LGA if there is one, or an area name that is also an
+// LGA (Ikeja is both).
+func (r *resolution) addLGA() error {
+	if r.c.LGA != "" {
+		hits, err := r.find("lga", r.c.LGA, 0.5, 3, nil)
+		if err != nil {
+			return err
+		}
+		if best, conf, rivals, ok := choose(hits, ctxNone); ok {
+			r.add(resolver.LGA, best.at, 0.6*conf, rivals > 0, "lga")
+		}
+		return nil
+	}
+	for _, text := range r.places {
+		hits, err := r.find("lga", text, 0.6, 3, nil)
+		if err != nil {
+			return err
+		}
+		if best, conf, rivals, ok := choose(hits, ctxNone); ok {
+			r.add(resolver.LGA, best.at, 0.55*conf, rivals > 0, "area")
+			return nil
+		}
+	}
+	return nil
+}
+
+// streetTexts are the names to try as a road: the parsed street, or else any place name that is not
+// the neighbourhood.
+func (r *resolution) streetTexts() []string {
+	if r.c.Street != "" {
+		return []string{r.c.Street}
+	}
+	var out []string
+	for _, t := range r.places {
+		if t != r.locText {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func (r *resolution) addStreet() error {
+	minSim := 0.5
+	if r.c.Street == "" {
+		minSim = 0.6 // a guess from an unclassified word needs a closer match
+	}
+	for i, text := range r.streetTexts() {
+		if i > 0 && r.street != nil {
+			break
+		}
+		if err := r.addRoad(text, minSim); err != nil {
+			return err
+		}
+		if r.c.HouseNumber != "" {
+			if err := r.addAddress(text); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// addRoad adds a street-class candidate. Confidence also falls with road length: a "street" answer
+// claims a 300 m radius, which a long road cannot honestly promise from one point.
+func (r *resolution) addRoad(text string, minSim float64) error {
+	hits, err := r.find("road", text, minSim, 60, r.locality)
+	if err != nil {
+		return err
+	}
+	best, conf, rivals, ok := choose(hits, kindOf(r.locality, nil))
+	if !ok {
+		return nil
+	}
+	extent := roadExtent(hits, best, r.locality != nil)
+	r.add(resolver.Street, best.at, conf*extentFactor(extent), rivals > 0, "street")
+	p := best.at
+	r.street = &p
+	return nil
+}
+
+// addAddress adds a building-class candidate when an address point with this house number exists on the street.
+func (r *resolution) addAddress(streetText string) error {
+	at, found, many, err := r.src.address(r.ctx, r.c.HouseNumber, r.src.Norm.NameKey(streetText), r.stateID, firstPoint(r.street, r.locality))
+	if err != nil || !found {
+		return err
+	}
+	conf := 0.95
+	if many {
+		conf = 0.65
+	}
+	r.add(resolver.Building, at, conf, many, "house_number")
+	return nil
+}
+
+// addLandmarks looks for each landmark nearest the street or neighbourhood the address already gave.
+func (r *resolution) addLandmarks() error {
+	around := firstPoint(r.street, r.locality)
+	kind := kindOf(around, r.street)
+	for _, l := range r.c.Landmarks {
+		hits, err := r.find("place", l.Name, 0.5, 40, around)
+		if err != nil {
+			return err
+		}
+		best, conf, rivals, ok := choose(hits, kind)
+		if !ok {
+			continue
+		}
+		if l.Relation == "" {
+			r.add(resolver.Building, best.at, math.Min(conf, 0.9), rivals > 0, "landmark:"+l.Name)
+			continue
+		}
+		// "opposite First Bank" puts the address near the bank, not on it: street-class at best, and only
+		// when the bank was checked against the street. Against a neighbourhood alone it cannot be claimed.
+		limit := 0.8
+		if kind != ctxStreet {
+			limit = 0.6
+		}
+		r.add(resolver.Street, best.at, math.Min(conf, limit), rivals > 0, "landmark:"+l.Name)
+	}
+	return r.addNamedPlaces(around, kind)
+}
+
+// addNamedPlaces tries the unclassified names as places too: "computer village, ikeja" names a market, but
+// the parser cannot know that "computer village" is not a neighbourhood.
+func (r *resolution) addNamedPlaces(around *point, kind ctxKind) error {
+	for _, text := range r.places {
+		if text == r.locText {
+			continue
+		}
+		hits, err := r.find("place", text, 0.7, 20, around)
+		if err != nil {
+			return err
+		}
+		if best, conf, rivals, ok := choose(hits, kind); ok && conf >= 0.5 {
+			r.add(resolver.Street, best.at, math.Min(conf, 0.8), rivals > 0, "place:"+text)
+		}
+	}
+	return nil
 }
 
 // ---- queries
@@ -289,9 +378,28 @@ func (s *Source) address(ctx context.Context, number, streetKey string, state in
 
 // ---- scoring
 
+// ctxKind says what the context point is, because that decides how close a place must be to corroborate it.
+type ctxKind int
+
+const (
+	ctxNone     ctxKind = iota // nothing to confirm against
+	ctxLocality                // the centre of a neighbourhood
+	ctxStreet                  // a point on the named road
+)
+
+func kindOf(around, street *point) ctxKind {
+	switch {
+	case street != nil:
+		return ctxStreet
+	case around != nil:
+		return ctxLocality
+	}
+	return ctxNone
+}
+
 // choose picks the best hit and reports how many other plausible places share the name.
 // A hit's score is its name similarity times how well it fits the context point (if there is one).
-func choose(hits []hit, hasCtx bool) (best hit, conf float64, rivals int, ok bool) {
+func choose(hits []hit, kind ctxKind) (best hit, conf float64, rivals int, ok bool) {
 	if len(hits) == 0 {
 		return hit{}, 0, 0, false
 	}
@@ -301,7 +409,7 @@ func choose(hits []hit, hasCtx bool) (best hit, conf float64, rivals int, ok boo
 	}
 	scored := make([]sc, len(hits))
 	for i, h := range hits {
-		scored[i] = sc{h, h.sim * contextFactor(h.ctxDist, hasCtx)}
+		scored[i] = sc{h, h.sim * contextFactor(h.ctxDist, kind)}
 	}
 	sort.SliceStable(scored, func(i, j int) bool { return scored[i].s > scored[j].s })
 	top := scored[0]
@@ -314,17 +422,32 @@ func choose(hits []hit, hasCtx bool) (best hit, conf float64, rivals int, ok boo
 	return top.h, top.s * ambiguityFactor(rivals), rivals, true
 }
 
-// contextFactor: how much does the context point corroborate this place?
-func contextFactor(d sql.NullFloat64, hasCtx bool) float64 {
-	if !hasCtx || !d.Valid {
+// contextFactor: how much does the context point corroborate this place? Against a point on the named
+// road a landmark must be close (an address "opposite First Bank" is within a few hundred metres of the
+// bank), so a bank 3 km along the road is a different bank. Against a neighbourhood centre, which is
+// itself kilometres wide, the bands are looser.
+func contextFactor(d sql.NullFloat64, kind ctxKind) float64 {
+	if kind == ctxNone || !d.Valid {
 		return 0.9 // nothing to confirm it against
 	}
+	m := d.Float64
+	if kind == ctxStreet {
+		switch {
+		case m <= 400:
+			return 1.0
+		case m <= 800:
+			return 0.8
+		case m <= 1500:
+			return 0.4
+		}
+		return 0.1
+	}
 	switch {
-	case d.Float64 <= 1000:
+	case m <= 1000:
 		return 1.0
-	case d.Float64 <= 3000:
+	case m <= 3000:
 		return 0.85
-	case d.Float64 <= 8000:
+	case m <= 8000:
 		return 0.5
 	}
 	return 0.2
