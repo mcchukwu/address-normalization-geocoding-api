@@ -15,6 +15,9 @@
   <node id="15" lat="9.0300" lon="7.4900"><tag k="place" v="suburb"/><tag k="name" v="Garki"/></node>
   <node id="16" lat="6.4281" lon="3.4219"><tag k="place" v="suburb"/><tag k="name" v="Victoria Island"/><tag k="alt_name" v="V.I."/></node>
   <node id="17" lat="6.5995" lon="3.3505"><tag k="amenity" v="marketplace"/><tag k="name" v="Computer Village"/></node>
+  <node id="18" lat="6.6240" lon="3.3540"><tag k="amenity" v="bank"/><tag k="name" v="Zenith Bank"/></node>
+  <node id="19" lat="9.0700" lon="7.4700"><tag k="place" v="suburb"/><tag k="name" v="Wuse II"/></node>
+  <node id="20" lat="9.0765" lon="7.4100"><tag k="place" v="city"/><tag k="name" v="Abuja City"/></node>
   <way id="100">
     <nd ref="1"/><nd ref="2"/><nd ref="3"/>
     <tag k="highway" v="primary"/><tag k="name" v="Allen Avenue"/><tag k="alt_name" v="Allen Ave"/>

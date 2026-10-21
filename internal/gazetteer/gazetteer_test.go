@@ -72,7 +72,7 @@ func TestBuildProducesTheExpectedGazetteer(t *testing.T) {
 	norm := resolver.NewNormalizer(resolver.DefaultTerms())
 	rep := buildTestVersion(t, admin, norm)
 
-	want := map[string]int{"state": 2, "lga": 3, "road": 2, "locality": 3, "place": 4, "address": 1}
+	want := map[string]int{"state": 2, "lga": 3, "road": 2, "locality": 5, "place": 5, "address": 1}
 	for k, n := range want {
 		if rep.Counts[k] != n {
 			t.Errorf("%s: got %d want %d (all: %v)", k, rep.Counts[k], n, rep.Counts)
@@ -224,6 +224,41 @@ func TestResolveThroughThePipeline(t *testing.T) {
 		}
 		if a.Fix != nil && a.Fix.Precision == resolver.Building {
 			t.Errorf("a typo must never produce a building-level claim")
+		}
+	})
+
+	t.Run("a landmark far from the named street is a different place: never pinned", func(t *testing.T) {
+		a := geocode("opp. zenith bank, allen avenue, ikeja, lagos")
+		if a.Fix == nil || near(a, 6.6240, 3.3540, 1000) {
+			t.Fatalf("the only Zenith Bank is 2.5 km from Allen Avenue: the pin must stay on the road, not jump to the bank: %+v", a.Fix)
+		}
+		for _, c := range a.Candidates {
+			for _, m := range c.Matched {
+				if m == "landmark:zenith bank" && c.Confidence > 0.3 {
+					t.Errorf("a landmark 2.5 km from the street should score very low, got %v", c.Confidence)
+				}
+			}
+		}
+	})
+
+	t.Run("Roman numerals match their digits", func(t *testing.T) {
+		a := geocode("wuse 2, abuja")
+		if a.Fix == nil || a.Fix.Precision != resolver.Locality || !near(a, 9.0700, 7.4700, 300) {
+			t.Fatalf("Wuse 2 is Wuse II: %+v", a.Fix)
+		}
+	})
+
+	t.Run("the specific neighbourhood beats the city named after it", func(t *testing.T) {
+		a := geocode("wusee 2, abuja city")
+		if a.Fix == nil || !near(a, 9.0700, 7.4700, 500) {
+			t.Fatalf("a slightly misspelt Wuse II should still beat the city centre: %+v", a.Fix)
+		}
+	})
+
+	t.Run("an unclassified name that is a known place is found", func(t *testing.T) {
+		a := geocode("computer village, ikeja")
+		if a.Fix == nil || a.Fix.Precision != resolver.Street || !near(a, 6.5995, 3.3505, 300) {
+			t.Fatalf("Computer Village is a mapped place: %+v", a.Fix)
 		}
 	})
 
