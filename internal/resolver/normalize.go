@@ -139,8 +139,16 @@ func (n *Normalizer) NameKey(s string) string {
 	s = strings.ToLower(s)
 	s = strings.NewReplacer("\u2019", "", "'", "", "\"", "", "(", " ", ")", " ", ",", " ", ";", " ",
 		"-", " ", "&", " and ", "_", " ", ".", " ").Replace(s)
-	return clean(n.expand(strings.Join(strings.Fields(s), " ")))
+	words := strings.Fields(n.expand(strings.Join(strings.Fields(s), " ")))
+	for i := 1; i < len(words); i++ { // "Wuse II" and "Wuse 2" are the same place; a lone I, V or X is left alone
+		if d, ok := romanNumerals[words[i]]; ok {
+			words[i] = d
+		}
+	}
+	return clean(strings.Join(words, " "))
 }
+
+var romanNumerals = map[string]string{"ii": "2", "iii": "3", "iv": "4", "vi": "6", "vii": "7", "viii": "8", "ix": "9"}
 
 // Canonical is a stable text form of the parts, used for hashing, never for display.
 func (c Components) Canonical() string {

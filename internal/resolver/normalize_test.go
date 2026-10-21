@@ -100,6 +100,8 @@ func TestNameKey(t *testing.T) {
 		{"Adeola Odeku St", "adeola odeku street"},
 		{"St. Mary's Church", "st marys church"},
 		{"V.I.", "v i"},
+		{"Wuse II", "wuse 2", "WUSE 2"},
+		{"Phase III", "phase 3"},
 	}
 	for _, group := range same {
 		want := n.NameKey(group[0])
