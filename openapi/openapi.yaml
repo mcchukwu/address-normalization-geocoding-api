@@ -39,6 +39,13 @@ info:
     ## Privacy
 
     Raw address text is not logged. Tenants may opt in to keeping it for up to 30 days.
+
+    ## Data sources
+
+    Place data contains information from OpenStreetMap, © OpenStreetMap contributors, available under the
+    [Open Database Licence](https://www.openstreetmap.org/copyright). Administrative boundaries are from
+    [geoBoundaries](https://www.geoboundaries.org/) (CC BY 4.0). Applications that show our results to people
+    should credit OpenStreetMap contributors.
   contact:
     name: API support
 servers:
