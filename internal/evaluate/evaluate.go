@@ -40,19 +40,14 @@ func ReadCSV(r io.Reader, norm *resolver.Normalizer) ([]Case, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read header: %w", err)
 	}
-	col := map[string]int{}
+	cols := map[string]int{}
 	for i, h := range head {
-		col[strings.ToLower(strings.TrimSpace(h))] = i
+		cols[strings.ToLower(strings.TrimSpace(h))] = i
 	}
-	if _, ok := col["raw_text"]; !ok {
+	if _, ok := cols["raw_text"]; !ok {
 		return nil, errors.New("header must include raw_text")
 	}
-	get := func(rec []string, name string) string {
-		if i, ok := col[name]; ok && i < len(rec) {
-			return strings.TrimSpace(rec[i])
-		}
-		return ""
-	}
+
 	var out []Case
 	for line := 2; ; line++ {
 		rec, err := cr.Read()
@@ -65,49 +60,9 @@ func ReadCSV(r io.Reader, norm *resolver.Normalizer) ([]Case, error) {
 		if strings.TrimSpace(strings.Join(rec, "")) == "" {
 			continue
 		}
-		c := Case{Raw: get(rec, "raw_text"), City: get(rec, "city"), State: get(rec, "state"), Style: strings.ToLower(get(rec, "style")),
-			Truth: get(rec, "truth_method"), Precision: strings.ToLower(get(rec, "expected_precision")),
-			CollectedAt: get(rec, "collected_at"), Notes: get(rec, "notes"), URL: get(rec, "source_url")}
-		fail := func(msg string) error { return fmt.Errorf("line %d (%q): %s", line, c.Raw, msg) }
-		if len(strings.TrimSpace(c.Raw)) < 3 {
-			return nil, fail("raw_text is too short")
-		}
-		latS, lngS := get(rec, "lat"), get(rec, "lng")
-		if (latS == "") != (lngS == "") {
-			return nil, fail("give both lat and lng, or neither")
-		}
-		hasTruth := latS != ""
-		if hasTruth {
-			lat, e1 := strconv.ParseFloat(latS, 64)
-			lng, e2 := strconv.ParseFloat(lngS, 64)
-			if e1 != nil || e2 != nil {
-				return nil, fail("lat and lng must be numbers")
-			}
-			if lat < 4.0 || lat > 14.5 || lng < 2.0 || lng > 15.0 {
-				return nil, fail("lat/lng is outside Nigeria: are they swapped? (lat first, about 4 to 14)")
-			}
-			c.Lat, c.Lng = &lat, &lng
-			if !precisions[c.Precision] {
-				return nil, fail("expected_precision must be one of building, street, locality, lga, state")
-			}
-			if c.Truth == "" {
-				return nil, fail("truth_method is required with coordinates (e.g. door_step_gps)")
-			}
-			if strings.Contains(strings.ToLower(c.Truth), "google") {
-				return nil, fail("ground truth must not come from Google (circular and against its terms)")
-			}
-		} else if c.Precision != "" || c.Truth != "" {
-			return nil, fail("expected_precision and truth_method need lat and lng")
-		}
-		if c.Style != "" && !styles[c.Style] {
-			return nil, fail("style must be one of structured, landmark, mixed, poi_name, postcode")
-		}
-		if c.State != "" {
-			si, ok := norm.StateByName(c.State)
-			if !ok {
-				return nil, fail("unknown state " + strconv.Quote(c.State))
-			}
-			c.StateID = si.ID
+		c, err := parseCase(row{rec, cols}, norm)
+		if err != nil {
+			return nil, fmt.Errorf("line %d (%q): %w", line, c.Raw, err)
 		}
 		out = append(out, c)
 	}
@@ -115,6 +70,71 @@ func ReadCSV(r io.Reader, norm *resolver.Normalizer) ([]Case, error) {
 		return nil, errors.New("no cases found")
 	}
 	return out, nil
+}
+
+type row struct {
+	rec  []string
+	cols map[string]int
+}
+
+func (r row) get(name string) string {
+	if i, ok := r.cols[name]; ok && i < len(r.rec) {
+		return strings.TrimSpace(r.rec[i])
+	}
+	return ""
+}
+
+// parseCase turns one CSV row into a Case, or says what is wrong with it.
+func parseCase(r row, norm *resolver.Normalizer) (Case, error) {
+	c := Case{Raw: r.get("raw_text"), City: r.get("city"), State: r.get("state"), Style: strings.ToLower(r.get("style")),
+		Truth: r.get("truth_method"), Precision: strings.ToLower(r.get("expected_precision")),
+		CollectedAt: r.get("collected_at"), Notes: r.get("notes"), URL: r.get("source_url")}
+	if len(strings.TrimSpace(c.Raw)) < 3 {
+		return c, errors.New("raw_text is too short")
+	}
+	if err := parseTruth(&c, r.get("lat"), r.get("lng")); err != nil {
+		return c, err
+	}
+	if c.Style != "" && !styles[c.Style] {
+		return c, errors.New("style must be one of structured, landmark, mixed, poi_name, postcode")
+	}
+	if c.State != "" {
+		si, ok := norm.StateByName(c.State)
+		if !ok {
+			return c, errors.New("unknown state " + strconv.Quote(c.State))
+		}
+		c.StateID = si.ID
+	}
+	return c, nil
+}
+
+// parseTruth checks the ground-truth columns, which come together or not at all.
+func parseTruth(c *Case, latS, lngS string) error {
+	if (latS == "") != (lngS == "") {
+		return errors.New("give both lat and lng, or neither")
+	}
+	if latS == "" {
+		if c.Precision != "" || c.Truth != "" {
+			return errors.New("expected_precision and truth_method need lat and lng")
+		}
+		return nil
+	}
+	lat, e1 := strconv.ParseFloat(latS, 64)
+	lng, e2 := strconv.ParseFloat(lngS, 64)
+	switch {
+	case e1 != nil || e2 != nil:
+		return errors.New("lat and lng must be numbers")
+	case lat < 4.0 || lat > 14.5 || lng < 2.0 || lng > 15.0:
+		return errors.New("lat/lng is outside Nigeria: are they swapped? (lat first, about 4 to 14)")
+	case !precisions[c.Precision]:
+		return errors.New("expected_precision must be one of building, street, locality, lga, state")
+	case c.Truth == "":
+		return errors.New("truth_method is required with coordinates (e.g. door_step_gps)")
+	case strings.Contains(strings.ToLower(c.Truth), "google"):
+		return errors.New("ground truth must not come from Google (circular and against its terms)")
+	}
+	c.Lat, c.Lng = &lat, &lng
+	return nil
 }
 
 // SetInfo describes a set to create.
