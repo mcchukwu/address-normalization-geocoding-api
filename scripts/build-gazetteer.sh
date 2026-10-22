@@ -21,4 +21,4 @@ done
 psql "$ETL_DATABASE_URL" -v ON_ERROR_STOP=1 -c 'CREATE SCHEMA IF NOT EXISTS osm_stage'
 osm2pgsql -d "$ETL_DATABASE_URL" -O flex -S scripts/osm2pgsql-gazetteer.lua --slim --drop "$PBF"
 DATABASE_URL="$ETL_DATABASE_URL" go run ./cmd/gazetteer -adm1 "$ADM1" -adm2 "$ADM2" -label "$LABEL" -activate
-echo "Done. Restart the API so it reports the new data_version."
+echo "Done. The API watcher will pick up the active data version within 30 seconds."

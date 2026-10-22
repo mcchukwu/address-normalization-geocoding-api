@@ -13,15 +13,13 @@ export
 dev: up migrate
 	docker compose exec -T db psql -U "$(POSTGRES_USER)" -d "$(POSTGRES_DB)" -q -v ON_ERROR_STOP=1 -f - < scripts/dev-roles.sql
 	docker compose up -d --build api
-	@echo "API on http://localhost:8080  (key: $(AUTH_STATIC_KEYS))   metrics on http://localhost:9090/metrics"
+	@echo "API on http://localhost:8080  (auth: $(AUTH_MODE))   metrics on http://localhost:9090/metrics"
 
 up:
 	docker compose up -d --wait db
 
 migrate:
-	@for f in $$(ls migrations/*.up.sql | sort); do \
-	  echo "applying $$f"; docker compose exec -T db psql -U "$(POSTGRES_USER)" -d "$(POSTGRES_DB)" -q -v ON_ERROR_STOP=1 -f - < $$f || exit 1; \
-	done
+	@scripts/migrate.sh
 
 verify:
 	docker compose exec -T db psql -U "$(POSTGRES_USER)" -d "$(POSTGRES_DB)" -q -v ON_ERROR_STOP=1 -f - < tests/verify.sql
