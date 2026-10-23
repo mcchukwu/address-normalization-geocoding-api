@@ -89,7 +89,7 @@ func (r *resolution) addState() error {
 	}
 	r.stateID = id
 	if id != 0 {
-		r.add(resolver.State, at, 0.9, false, "state")
+		r.add(resolver.State, at, 0.9, false, "state:"+r.c.State)
 	}
 	return nil
 }
@@ -117,7 +117,7 @@ func (r *resolution) addLocality() error {
 		}
 	}
 	if r.locText != "" {
-		r.add(resolver.Locality, best.at, conf, ambiguous, "area")
+		r.add(resolver.Locality, best.at, conf, ambiguous, "area:"+r.locText)
 		p := best.at
 		r.locality = &p
 	}
@@ -133,7 +133,7 @@ func (r *resolution) addLGA() error {
 			return err
 		}
 		if best, conf, rivals, ok := choose(hits, ctxNone); ok {
-			r.add(resolver.LGA, best.at, 0.6*conf, rivals > 0, "lga")
+			r.add(resolver.LGA, best.at, 0.6*conf, rivals > 0, "lga:"+r.c.LGA)
 		}
 		return nil
 	}
@@ -143,7 +143,7 @@ func (r *resolution) addLGA() error {
 			return err
 		}
 		if best, conf, rivals, ok := choose(hits, ctxNone); ok {
-			r.add(resolver.LGA, best.at, 0.55*conf, rivals > 0, "area")
+			r.add(resolver.LGA, best.at, 0.55*conf, rivals > 0, "area:"+text)
 			return nil
 		}
 	}
@@ -198,7 +198,7 @@ func (r *resolution) addRoad(text string, minSim float64) error {
 		return nil
 	}
 	extent := roadExtent(hits, best, r.locality != nil)
-	r.add(resolver.Street, best.at, conf*extentFactor(extent), rivals > 0, "street")
+	r.add(resolver.Street, best.at, conf*extentFactor(extent), rivals > 0, "street:"+text)
 	p := best.at
 	r.street = &p
 	return nil
@@ -214,7 +214,7 @@ func (r *resolution) addAddress(streetText string) error {
 	if many {
 		conf = 0.65
 	}
-	r.add(resolver.Building, at, conf, many, "house_number")
+	r.add(resolver.Building, at, conf, many, "house_number:"+r.c.HouseNumber)
 	return nil
 }
 
