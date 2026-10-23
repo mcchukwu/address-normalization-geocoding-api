@@ -60,8 +60,11 @@ func TestGeocodeResolvesToFinestClaimableClass(t *testing.T) {
 	if len(ans.Candidates) != 3 {
 		t.Errorf("max_candidates should cap the list at 3, got %d", len(ans.Candidates))
 	}
-	if contains(ans.Warnings, "landmark_not_matched") {
-		t.Errorf("first bank is in the fixture, so no landmark warning expected: %v", ans.Warnings)
+	if ans.Fix.Confidence != 0.7 {
+		t.Errorf("an unmatched landmark should cap the street at 0.70, got %v", ans.Fix.Confidence)
+	}
+	if !contains(ans.Warnings, "landmark_not_matched") {
+		t.Errorf("first bank is below the street threshold, so it must be named: %v", ans.Warnings)
 	}
 }
 

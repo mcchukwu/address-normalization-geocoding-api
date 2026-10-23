@@ -66,7 +66,7 @@ type Candidate struct {
 	Precision  Precision
 	Confidence float64
 	Source     string
-	Matched    []string // which parts matched, e.g. "street", "area", "landmark:first bank"
+	Matched    []string // the matched part and its input text, e.g. "street:allen avenue", "landmark:first bank"
 	Ambiguous  bool     // several plausible places share this name
 }
 
@@ -82,6 +82,7 @@ type Answer struct {
 	Normalized    Components
 	Fix           *Fix // nil when nothing resolves
 	Candidates    []Candidate
+	Unmatched     []string // supplied parts that did not match at their threshold, e.g. "street:ikorodu road"
 	Warnings      []string
 	SourcesUsed   []string
 	SourcesFailed []string
