@@ -1,0 +1,65 @@
+# Run with: promtool test rules deploy/monitoring/rules_test.yml
+rule_files:
+  - rules.yml
+evaluation_interval: 1m
+tests:
+  - name: p95 latency comes out of the histogram as expected
+    interval: 1m
+    input_series:
+      # per minute: 80 requests under 25 ms, 85 under 50 ms, 90 under 100 ms (up to 500 ms), 100 under 800 ms
+      - {series: 'geocode_http_request_duration_seconds_bucket{endpoint="geocode",traffic_class="real",le="0.025"}', values: '0+80x20'}
+      - {series: 'geocode_http_request_duration_seconds_bucket{endpoint="geocode",traffic_class="real",le="0.05"}',  values: '0+85x20'}
+      - {series: 'geocode_http_request_duration_seconds_bucket{endpoint="geocode",traffic_class="real",le="0.1"}',   values: '0+90x20'}
+      - {series: 'geocode_http_request_duration_seconds_bucket{endpoint="geocode",traffic_class="real",le="0.2"}',   values: '0+90x20'}
+      - {series: 'geocode_http_request_duration_seconds_bucket{endpoint="geocode",traffic_class="real",le="0.3"}',   values: '0+90x20'}
+      - {series: 'geocode_http_request_duration_seconds_bucket{endpoint="geocode",traffic_class="real",le="0.5"}',   values: '0+90x20'}
+      - {series: 'geocode_http_request_duration_seconds_bucket{endpoint="geocode",traffic_class="real",le="0.8"}',   values: '0+100x20'}
+      - {series: 'geocode_http_request_duration_seconds_bucket{endpoint="geocode",traffic_class="real",le="1.5"}',   values: '0+100x20'}
+      - {series: 'geocode_http_request_duration_seconds_bucket{endpoint="geocode",traffic_class="real",le="3"}',     values: '0+100x20'}
+      - {series: 'geocode_http_request_duration_seconds_bucket{endpoint="geocode",traffic_class="real",le="+Inf"}',  values: '0+100x20'}
+    promql_expr_test:
+      - expr: round(geocode:latency_p95_seconds:rate5m{traffic_class="real"}, 0.01)
+        eval_time: 10m
+        exp_samples:
+          - labels: '{traffic_class="real"}'
+            value: 0.65   # rank 95 sits halfway between 90 (at 0.5 s) and 100 (at 0.8 s)
+
+  - name: error ratio is computed per traffic class and alerts after ten minutes
+    interval: 1m
+    input_series:
+      - {series: 'geocode_http_requests_total{endpoint="geocode",status_class="2xx",traffic_class="real"}', values: '0+98x40'}
+      - {series: 'geocode_http_requests_total{endpoint="geocode",status_class="5xx",traffic_class="real"}', values: '0+2x40'}
+      - {series: 'geocode_http_requests_total{endpoint="geocode",status_class="2xx",traffic_class="synthetic"}', values: '0+1x40'}
+    promql_expr_test:
+      - expr: round(geocode:server_error_ratio:rate5m, 0.001)
+        eval_time: 15m
+        exp_samples:
+          - labels: '{traffic_class="real"}'
+            value: 0.02
+          - labels: '{traffic_class="synthetic"}'   # no 5xx series for this class: must read 0, not disappear
+            value: 0
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ServerErrorsHigh
+        exp_alerts: []   # not yet: it must hold for ten minutes
+      - eval_time: 20m
+        alertname: ServerErrorsHigh
+        exp_alerts:
+          - exp_labels: {traffic_class: real}
+            exp_annotations: {summary: "More than 1% of requests are failing with a 5xx"}
+
+  - name: availability is the share of probes that worked
+    interval: 1m
+    input_series:
+      - {series: 'probe_requests_total{outcome="success"}', values: '0+1x60'}
+      - {series: 'probe_requests_total{outcome="failure"}', values: '0+0x30 0+1x30'}
+    promql_expr_test:
+      - expr: probe:availability:30d
+        eval_time: 30m
+        exp_samples:
+          - labels: 'probe:availability:30d'
+            value: 1
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ProbeFailing
+        exp_alerts: []

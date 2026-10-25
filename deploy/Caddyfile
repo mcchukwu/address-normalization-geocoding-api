@@ -1,0 +1,14 @@
+{
+	email {$ACME_EMAIL}
+}
+
+# The API. Caddy gets and renews the TLS certificate by itself.
+api.{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy api:8080
+}
+
+# The public, read-only status dashboard.
+status.{$DOMAIN} {
+	reverse_proxy grafana:3000
+}

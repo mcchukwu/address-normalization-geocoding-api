@@ -1,0 +1,51 @@
+# Recording rules turn raw counters into the figures the dashboard and the CV quote.
+# Traffic is split by traffic_class: real (customers), synthetic (the probe), loadtest.
+groups:
+  - name: geocode-recording
+    rules:
+      - record: geocode:requests_per_second:rate5m
+        expr: sum by (traffic_class) (rate(geocode_http_requests_total{endpoint!~"healthz|readyz|other"}[5m]))
+      - record: geocode:requests:increase1d
+        expr: sum by (traffic_class) (increase(geocode_http_requests_total{endpoint!~"healthz|readyz|other"}[1d]))
+      - record: geocode:latency_p95_seconds:rate5m
+        expr: >
+          histogram_quantile(0.95, sum by (le, traffic_class)
+          (rate(geocode_http_request_duration_seconds_bucket{endpoint="geocode"}[5m])))
+      - record: geocode:server_error_ratio:rate5m
+        # A class with no 5xx series at all must read 0, not vanish, so the numerator falls back to 0 * total.
+        expr: >
+          (sum by (traffic_class) (rate(geocode_http_requests_total{status_class="5xx"}[5m]))
+            or (0 * sum by (traffic_class) (rate(geocode_http_requests_total[5m]))))
+          / sum by (traffic_class) (rate(geocode_http_requests_total[5m]))
+      # What a caller experiences: the share of probe requests that worked over the last 30 days.
+      - record: probe:availability:30d
+        expr: >
+          sum(increase(probe_requests_total{outcome="success"}[30d]))
+          / sum(increase(probe_requests_total[30d]))
+      - record: probe:latency_p95_seconds:rate5m
+        expr: histogram_quantile(0.95, sum by (le) (rate(probe_duration_seconds_bucket[5m])))
+
+  - name: geocode-alerts
+    rules:
+      - alert: ApiDown
+        expr: up{job="geocode-api"} == 0
+        for: 2m
+        annotations: {summary: "The API's metrics endpoint is not answering"}
+      - alert: ProbeFailing
+        expr: probe_up == 0
+        for: 3m
+        annotations: {summary: "The probe cannot get a good answer from the public API"}
+      - alert: ProbeStale
+        expr: time() - probe_last_success_timestamp_seconds > 300
+        annotations: {summary: "No successful probe for five minutes"}
+      - alert: LatencyAboveTarget
+        expr: geocode:latency_p95_seconds:rate5m{traffic_class="real"} > 0.3
+        for: 10m
+        annotations: {summary: "p95 latency above the 300 ms target"}
+      - alert: ServerErrorsHigh
+        expr: geocode:server_error_ratio:rate5m{traffic_class="real"} > 0.01
+        for: 10m
+        annotations: {summary: "More than 1% of requests are failing with a 5xx"}
+      - alert: RequestLogDropping
+        expr: increase(geocode_request_log_dropped_total[10m]) > 0
+        annotations: {summary: "Request-log rows are being dropped: the database writer is falling behind"}
