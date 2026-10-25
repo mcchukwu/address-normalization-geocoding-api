@@ -6,3 +6,7 @@ bin/*
 data/osm/*.pbf
 
 .captain/*
+
+# Artifacts
+package/
+*.tgz
