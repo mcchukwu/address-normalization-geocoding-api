@@ -32,23 +32,23 @@ func (FixtureSource) Name() string { return "fixture" }
 // Resolve implements Source. Each matched part yields a candidate at that part's precision.
 func (FixtureSource) Resolve(_ context.Context, c Components) ([]Candidate, error) {
 	var out []Candidate
-	add := func(key, matched string) {
+	add := func(key string) {
 		if e, ok := fixtureData[key]; ok {
 			out = append(out, Candidate{Lat: e.lat, Lng: e.lng, Precision: e.prec, Confidence: e.conf,
-				Source: "fixture", Matched: []string{matched}})
+				Source: "fixture", Matched: []string{key}})
 		}
 	}
 	if c.Street != "" {
-		add("street:"+c.Street, "street")
+		add("street:" + c.Street)
 	}
 	if c.Area != "" {
-		add("area:"+c.Area, "area")
+		add("area:" + c.Area)
 	}
 	if c.State != "" {
-		add("state:"+c.State, "state")
+		add("state:" + c.State)
 	}
 	for _, l := range c.Landmarks {
-		add("landmark:"+l.Name, "landmark:"+l.Name)
+		add("landmark:" + l.Name)
 	}
 	return out, nil
 }

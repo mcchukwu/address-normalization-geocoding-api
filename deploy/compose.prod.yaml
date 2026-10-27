@@ -1,0 +1,143 @@
+# Production stack for one server. NOT run in the authoring sandbox (no Docker there): read DEPLOY.md,
+# and expect to fix small things on the first start.
+#
+#   docker compose -f deploy/compose.prod.yaml --env-file deploy/.env.prod up -d db
+name: geocode
+
+x-app: &app
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+    args:
+      GO_VERSION: ${GO_VERSION:-1.27.0}
+  restart: unless-stopped
+
+services:
+  db:
+    image: postgis/postgis:${POSTGIS_TAG:-16-3.4}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      # PostgreSQL 18+ images keep data under /var/lib/postgresql instead: mount the volume there.
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"   # reachable from the server itself (builds, backups), never from the internet
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    image: postgis/postgis:${POSTGIS_TAG:-16-3.4}
+    profiles: [tools]
+    depends_on:
+      db: {condition: service_healthy}
+    environment:
+      PGHOST: db
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB}
+    volumes:
+      - ../migrations:/migrations:ro
+    entrypoint: ["/bin/sh", "-c", "for f in $$(ls /migrations/*.up.sql | sort); do echo applying $$f; psql -q -v ON_ERROR_STOP=1 -f $$f || exit 1; done"]
+
+  api:
+    <<: *app
+    depends_on:
+      db: {condition: service_healthy}
+    environment:
+      GEOCODE_ENV: prod
+      AUTH_MODE: local
+      SOURCES: gazetteer
+      DATABASE_URL: postgres://geocode_app:${APP_DB_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
+      HASH_KEY: ${HASH_KEY}
+      DEFAULT_RATE_PER_MIN: ${DEFAULT_RATE_PER_MIN:-60}
+      ADDR: ":8080"
+      ADMIN_ADDR: "0.0.0.0:9090"     # metrics: reachable by Prometheus on the internal network only
+    expose: ["8080", "9090"]
+
+  probe:
+    <<: *app
+    profiles: [probe]            # start it after PROBE_API_KEY exists
+    entrypoint: ["/probe"]
+    environment:
+      API_URL: https://api.${DOMAIN}
+      API_KEY: ${PROBE_API_KEY}
+      INTERVAL: 60s
+      LISTEN: ":9100"
+    expose: ["9100"]
+
+  keys:
+    <<: *app
+    profiles: [tools]
+    restart: "no"
+    entrypoint: ["/keys"]
+    depends_on:
+      db: {condition: service_healthy}
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
+
+  geoeval:
+    <<: *app
+    profiles: [tools]
+    restart: "no"
+    entrypoint: ["/geoeval"]
+    depends_on:
+      db: {condition: service_healthy}
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
+    volumes:
+      - ../data/eval:/eval:ro
+
+  prometheus:
+    image: prom/prometheus:${PROMETHEUS_TAG:-latest}
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=45d      # long enough to compute 30-day availability
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/rules.yml:/etc/prometheus/rules.yml:ro
+      - promdata:/prometheus
+    expose: ["9090"]
+
+  grafana:
+    image: grafana/grafana-oss:${GRAFANA_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_SERVER_ROOT_URL: https://status.${DOMAIN}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"        # the dashboard is public and read-only on purpose
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/geocode-overview.json
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    expose: ["3000"]
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on: [api, grafana]
+
+volumes:
+  pgdata:
+  promdata:
+  grafanadata:
+  caddydata:
+  caddyconfig:

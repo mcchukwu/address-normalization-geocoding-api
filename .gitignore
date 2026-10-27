@@ -4,3 +4,9 @@ bin/*
 .env
 # Large OSM extracts
 data/osm/*.pbf
+
+.captain/*
+
+# Artifacts
+package/
+*.tgz

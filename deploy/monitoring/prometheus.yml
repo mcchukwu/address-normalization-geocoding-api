@@ -1,0 +1,14 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/rules.yml
+
+scrape_configs:
+  - job_name: geocode-api        # the API's admin port (never published to the internet)
+    static_configs:
+      - targets: ['api:9090']
+  - job_name: probe              # the black-box probe
+    static_configs:
+      - targets: ['probe:9100']
